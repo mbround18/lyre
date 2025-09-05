@@ -13,7 +13,7 @@ A minimal Discord music bot using Serenity + Songbird with yt-dlp. It provides s
 1. Create a bot in the Discord Developer Portal and copy the token.
 2. Create a `.env` file:
 
-```
+```dotenv
 # Required
 DISCORD_TOKEN=your-bot-token-here
 
@@ -29,7 +29,7 @@ DISCORD_TOKEN=your-bot-token-here
 # LYRE_BITRATE=64000
 
 # Start tracks muted for N milliseconds, then raise to 0.5 volume (masks initial jitters)
-# LYRE_PREROLL_MS=10000
+# LYRE_PREROLL_MS=100
 ```
 
 3. Build and run:

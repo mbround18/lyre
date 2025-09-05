@@ -79,9 +79,38 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         .unwrap_or(96_000);
     call.set_bitrate(Bitrate::BitsPerSecond(br as i32));
     let handle: TrackHandle = call.enqueue_input(source).await;
-    // Set volume to 0.5
-    let _ = handle.set_volume(0.5);
-    drop(call);
+    // Determine queue position after enqueue. If >1, this track is queued behind current/others.
+    let position = call.queue().len();
+    let target_volume = 0.5f32;
+    if position > 1 {
+        let _ = handle.set_volume(target_volume);
+        drop(call);
+        let _ = cmd
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content(format!("Queued, in position {}", position)),
+            )
+            .await;
+        return Ok(());
+    } else {
+        // First in queue: apply optional preroll buffer to mask initial jitters.
+        let preroll_ms = std::env::var("LYRE_PREROLL_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|ms| *ms > 0 && *ms <= 30000)
+            .unwrap_or(0);
+        if preroll_ms > 0 {
+            let _ = handle.set_volume(0.0);
+        } else {
+            let _ = handle.set_volume(target_volume);
+        }
+        drop(call);
+
+        if preroll_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(preroll_ms)).await;
+            let _ = handle.set_volume(target_volume);
+        }
+    }
 
     let _ = cmd
         .edit_response(
