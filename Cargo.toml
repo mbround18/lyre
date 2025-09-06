@@ -14,13 +14,30 @@ serenity = { version = "0.12.4", default-features = false, features = ["client",
 songbird = { version = "0.5.0", features = ["serenity", "builtin-queue", "driver"] }
 symphonia = { version = "0.5.4", default-features = false, features = ["mp3"] }
 thiserror = "2.0.16"
-tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "fs", "process"] }
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "fs", "process", "signal"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 url = "2.5.7"
 which = "8.0.0"
 dotenvy = "0.15.7"
+actix-web = { version = "4.11.0", default-features = false, features = ["macros"] }
+actix-files = "0.6.7"
+actix-web-httpauth = "0.8.2"
+base64 = "0.22.1"
+walkdir = "2.5.0"
+diesel = { version = "2.2.12", features = ["sqlite", "chrono", "returning_clauses_for_sqlite_3_35"] }
+chrono = { version = "0.4.41", features = ["serde"] }
 
 [profile.dev]
 # Optimize dev builds to reduce runtime hiccups without needing --release
 opt-level = 2
+
+[profile.release]
+# Production build optimizations
+opt-level = 3           # maximum optimizations for runtime perf
+lto = "thin"            # link-time optimization (good balance of speed/size)
+codegen-units = 1       # better cross-crate optimization
+panic = "abort"         # smaller binary; abort on panic
+debug = 0               # no debug info in final artifact
+incremental = false     # full optimization, no incremental artifacts
+strip = "symbols"       # strip symbols to reduce size

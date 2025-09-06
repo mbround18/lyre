@@ -131,6 +131,31 @@ async fn ytdlp_extract_id(ytdlp: &PathBuf, url: &str) -> Result<String> {
     Ok(id)
 }
 
+pub async fn ytdlp_extract_title(url: &str) -> Result<String> {
+    let ytdlp = ensure_yt_dlp().await?;
+    let out = TokioCommand::new(&ytdlp)
+        .arg("--print")
+        .arg("title")
+        .arg("--skip-download")
+        .arg("-q")
+        .arg(url)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .context("running yt-dlp to extract title")?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "yt-dlp --print title failed with status: {}",
+            out.status
+        ));
+    }
+    let title = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if title.is_empty() {
+        return Err(anyhow!("empty title from yt-dlp"));
+    }
+    Ok(title)
+}
+
 fn download_base_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("DOWNLOAD_FOLDER") {
         let p = PathBuf::from(dir);
@@ -200,6 +225,10 @@ pub fn spawn_download_mp3(
             .arg("-x")
             .arg("--audio-format")
             .arg("mp3")
+            .arg("--audio-quality")
+            .arg("0") // Best quality
+            .arg("--postprocessor-args")
+            .arg("ffmpeg:-ar 48000 -ac 2") // Force 48kHz stereo (Discord's preferred format)
             .arg("--no-playlist")
             .arg("--newline")
             .arg("-o")
@@ -215,11 +244,11 @@ pub fn spawn_download_mp3(
             let mut reader = BufReader::new(stderr).lines();
             let mut last_sent = 255u8; // impossible value to force first update
             while let Some(Ok(line)) = reader.next_line().await.transpose() {
-                if let Some(pct) = parse_percent(&line) {
-                    if pct != last_sent {
-                        let _ = tx.send(DownloadProgress { percent: pct });
-                        last_sent = pct;
-                    }
+                if let Some(pct) = parse_percent(&line)
+                    && pct != last_sent
+                {
+                    let _ = tx.send(DownloadProgress { percent: pct });
+                    last_sent = pct;
                 }
             }
         }
@@ -244,9 +273,9 @@ pub fn spawn_download_mp3(
         }
         let (p, _) = newest.ok_or_else(|| anyhow!("no mp3 produced"))?;
         // Move/copy into cache location, handling races and cross-device moves.
-        let final_path = if fs::try_exists(&cached).await.unwrap_or(false) {
-            cached.clone()
-        } else if fs::rename(&p, &cached).await.is_ok() {
+        let final_path = if fs::try_exists(&cached).await.unwrap_or(false)
+            || fs::rename(&p, &cached).await.is_ok()
+        {
             cached.clone()
         } else if fs::copy(&p, &cached).await.is_ok() {
             let _ = fs::remove_file(&p).await;

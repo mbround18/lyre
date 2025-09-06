@@ -1,3 +1,6 @@
+use crate::metrics::METRICS;
+use crate::database::establish_connection;
+use crate::database::models::VoiceConnection;
 use anyhow::{Result, anyhow};
 use serenity::all::{
     CommandInteraction, Context as SerenityContext, CreateCommand, CreateInteractionResponse,
@@ -28,12 +31,25 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         return Ok(());
     };
     let mut call = call_lock.lock().await;
+    // Adjust metrics with current queue length if we can get it
+    let qlen = call.queue().len();
+    if qlen > 0 {
+        METRICS.dec_queue(qlen);
+    }
     // Stop current and clear queue
     call.stop();
     drop(call);
     // Also disconnect from the voice channel
     let manager_clone = manager.clone();
-    let _ = manager_clone.remove(guild_id).await;
+    if manager_clone.remove(guild_id).await.is_ok() {
+        METRICS.dec_connections();
+        
+        // Update database to remove voice connection tracking
+        let mut db_conn = establish_connection();
+        if let Err(e) = VoiceConnection::disconnect(&mut db_conn, &guild_id.to_string()) {
+            tracing::warn!("Failed to update database when disconnecting from voice: {}", e);
+        }
+    }
 
     cmd.edit_response(
         &ctx.http,

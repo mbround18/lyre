@@ -9,9 +9,14 @@ use serenity::{
 use songbird::{Config as VoiceConfig, driver::MixMode, serenity::SerenityInit};
 use tracing::{error, info};
 
+mod api;
 mod audio;
+mod auth;
 mod commands;
+mod database;
 mod env;
+mod metrics;
+mod web_api;
 
 struct Handler;
 
@@ -32,7 +37,16 @@ impl serenity::prelude::EventHandler for Handler {
                 "Invite this bot: {} (app_id={}, user_id={})",
                 invite, app.id, ready.user.id
             );
+            println!("Invite this bot: {}", invite);
         }
+
+        if let Ok(dir) = crate::audio::resolved_download_base_dir() {
+            info!("Download cache dir: {}", dir.display());
+        }
+        info!("Commands: /play url:<link>, /next, /stop");
+        info!(
+            "Tunables: LYRE_MIX_MODE=mono|stereo, LYRE_BITRATE=16000..192000, LYRE_PREROLL_MS=0..30000, DOWNLOAD_FOLDER=path"
+        );
 
         // Register global slash commands
         for def in [
@@ -44,6 +58,9 @@ impl serenity::prelude::EventHandler for Handler {
                 error!("failed to register global command: {e:?}");
             }
         }
+
+        // Mark ready for probes once we've registered commands
+        metrics::METRICS.set_ready(true);
     }
 
     async fn interaction_create(&self, ctx: SerenityContext, interaction: Interaction) {
@@ -82,6 +99,9 @@ async fn main() -> Result<()> {
 
     let token = env::read_discord_token()?;
 
+    // Start background metrics scanners
+    metrics::spawn_download_size_scanner();
+
     let intents = GatewayIntents::non_privileged() | GatewayIntents::GUILD_VOICE_STATES;
     // Tune Songbird to reduce chance of audio hiccups under load.
     // - preallocated_tracks: avoid runtime allocations when queueing
@@ -92,10 +112,13 @@ async fn main() -> Result<()> {
             Ok("mono") => MixMode::Mono,
             _ => MixMode::Stereo,
         };
+            
         VoiceConfig::default()
             .preallocated_tracks(2)
             .use_softclip(false)
             .mix_mode(mix)
+            // Increase gateway timeout to handle slow connections (60 seconds for very slow networks)
+            .gateway_timeout(Some(std::time::Duration::from_secs(60)))
     };
 
     let mut client = serenity::Client::builder(token, intents)
@@ -103,27 +126,40 @@ async fn main() -> Result<()> {
         .register_songbird_from_config(voice_cfg)
         .await?;
 
-    // Log an invite URL early (before gateway READY), so it's visible immediately
-    let app = client.http.get_current_application_info().await?;
-    let perms = Permissions::CONNECT | Permissions::SPEAK;
-    let invite = format!(
-        "https://discord.com/api/oauth2/authorize?client_id={}&permissions={}&scope=bot%20applications.commands",
-        app.id,
-        perms.bits()
-    );
-    info!("Invite this bot: {} (app_id={})", invite, app.id);
-    println!("Invite this bot: {}", invite);
+    // Initial startup info will be logged in the ready event handler
 
-    if let Ok(dir) = audio::resolved_download_base_dir() {
-        info!("Download cache dir: {}", dir.display());
-    }
-    info!("Commands: /play url:<link>, /next, /stop");
-    info!(
-        "Tunables: LYRE_MIX_MODE=mono|stereo, LYRE_BITRATE=16000..192000, LYRE_PREROLL_MS=0..30000, DOWNLOAD_FOLDER=path"
-    );
+    // Run the HTTP server and Discord client concurrently with signal handling
+    let http_bind = std::env::var("LYRE_HTTP_BIND").ok();
+    let http_task = tokio::task::spawn_blocking(move || {
+        // Run a dedicated Actix system on this blocking thread
+        actix_web::rt::System::new().block_on(web_api::run_http(http_bind))
+    });
 
-    if let Err(why) = client.start_autosharded().await {
-        error!("Client error: {why:?}");
+    let discord_task = tokio::spawn(async move {
+        if let Err(why) = client.start_autosharded().await {
+            error!("Client error: {why:?}");
+        }
+    });
+
+    // Set up signal handling
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+
+    tokio::select! {
+        _ = http_task => {
+            info!("HTTP server terminated");
+        }
+        _ = discord_task => {
+            info!("Discord client terminated");
+        }
+        _ = sigterm.recv() => {
+            info!("Received SIGTERM, shutting down gracefully");
+        }
+        _ = sigint.recv() => {
+            info!("Received SIGINT (Ctrl+C), shutting down gracefully");
+        }
     }
+
+    info!("Shutdown complete");
     Ok(())
 }

@@ -1,12 +1,57 @@
 use anyhow::{Result, anyhow};
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, CommandOptionType, Context as SerenityContext,
-    CreateCommand, CreateCommandOption, CreateInteractionResponse,
-    CreateInteractionResponseMessage, EditInteractionResponse,
+    CreateCommand, CreateCommandOption, CreateEmbed,
+    CreateMessage, EditInteractionResponse,
 };
-use songbird::{driver::Bitrate, input::Input, tracks::TrackHandle};
+use serenity::async_trait;
+use songbird::{
+    Event, EventContext, EventHandler as VoiceEventHandler, Songbird,
+};
+use std::sync::Arc;
 
-use crate::audio::{DownloadProgress, spawn_download_mp3};
+use crate::audio::{DownloadProgress, spawn_download_mp3, ytdlp_extract_title};
+use crate::database::establish_connection;
+use crate::database::models::{VoiceConnection, QueueHistory, SongCache};
+use crate::metrics::METRICS;
+
+struct TrackEndNotifier {
+    guild_id: serenity::all::GuildId,
+    channel_id: serenity::all::ChannelId,
+    manager: Arc<Songbird>,
+    http: Arc<serenity::http::Http>,
+}
+
+#[async_trait]
+impl VoiceEventHandler for TrackEndNotifier {
+    async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
+        // Check if queue is empty after this track ends
+        if let Some(call_lock) = self.manager.get(self.guild_id) {
+            let call = call_lock.lock().await;
+            let queue_len = call.queue().len();
+            drop(call);
+
+            if queue_len == 0 {
+                // Queue is empty, disconnect
+                let _ = self.manager.remove(self.guild_id).await;
+
+                // Send a message to the channel
+                let embed = CreateEmbed::new()
+                    .title("🎵 Queue Finished")
+                    .description(
+                        "All songs have finished playing. Disconnected from voice channel.",
+                    )
+                    .colour(0x808080); // Gray
+
+                let _ = self
+                    .channel_id
+                    .send_message(&self.http, CreateMessage::new().embeds(vec![embed]))
+                    .await;
+            }
+        }
+        None
+    }
+}
 
 pub fn definition() -> CreateCommand {
     let opt =
@@ -17,25 +62,37 @@ pub fn definition() -> CreateCommand {
 }
 
 pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<()> {
-    let url = cmd
-        .data
-        .options
-        .iter()
-        .find(|o| o.name == "url")
-        .and_then(|o| match &o.value {
-            CommandDataOptionValue::String(s) => Some(s.as_str()),
-            _ => None,
-        })
-        .ok_or_else(|| anyhow!("missing url"))?;
+    // Log some diagnostic information
+    tracing::info!("Processing /play command for user {} in guild {:?}", cmd.user.id, cmd.guild_id);
+    
+    let url = match cmd.data.options.first() {
+        Some(option) => match &option.value {
+            CommandDataOptionValue::String(url) => url,
+            _ => return Err(anyhow!("expected string URL")),
+        },
+        None => return Err(anyhow!("missing URL argument")),
+    };
 
-    cmd.create_response(
-        &ctx.http,
-        CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new()),
-    )
-    .await
-    .ok();
+    let guild_id = cmd.guild_id.ok_or_else(|| anyhow!("not in guild"))?;
+    
+    // Check bot's permissions first
+    let bot_id = ctx.cache.current_user().id;
+    {
+        let guild = ctx
+            .cache
+            .guild(guild_id)
+            .ok_or_else(|| anyhow!("guild not in cache"))?;
+        
+        // Check if bot has necessary permissions
+        if let Some(_member) = guild.members.get(&bot_id) {
+            tracing::info!("Bot found in guild members");
+        }
+    }
 
-    let guild_id = cmd.guild_id.ok_or_else(|| anyhow!("not in a guild"))?;
+    // Defer response immediately to give us more time
+    cmd.defer(&ctx.http).await?;
+
+    // Get the user's voice channel
     let channel_id = {
         let guild = ctx
             .cache
@@ -48,11 +105,105 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
             .ok_or_else(|| anyhow!("you must be in a voice channel"))?
     };
 
+    // Check if bot has permissions to join the voice channel
+    {
+        let guild = ctx
+            .cache
+            .guild(guild_id)
+            .ok_or_else(|| anyhow!("guild not in cache"))?;
+        
+        if let Some(channel) = guild.channels.get(&channel_id) {
+            if let Some(bot_member) = guild.members.get(&bot_id) {
+                let bot_permissions = guild.user_permissions_in(channel, bot_member);
+                
+                if !bot_permissions.connect() {
+                    return Err(anyhow!("I don't have permission to connect to your voice channel. Please ensure I have the 'Connect' permission."));
+                }
+                
+                if !bot_permissions.speak() {
+                    return Err(anyhow!("I don't have permission to speak in your voice channel. Please ensure I have the 'Speak' permission."));
+                }
+                
+                tracing::info!("Bot has necessary permissions to join voice channel {}", channel_id);
+            } else {
+                return Err(anyhow!("Bot is not a member of this guild. Please re-invite the bot."));
+            }
+        } else {
+            return Err(anyhow!("Voice channel not found in cache. Please try again."));
+        }
+    }
+
     let manager = songbird::get(ctx).await.unwrap().clone();
-    let call_lock = manager.join(guild_id, channel_id).await?;
+    // Only count a connection if we weren't already connected
+    let is_new = manager.get(guild_id).is_none();
+    
+    // Check if we're already connected to avoid unnecessary joins
+    let call_lock = if let Some(existing_call) = manager.get(guild_id) {
+        tracing::info!("Already connected to voice channel in guild {}, reusing connection", guild_id);
+        existing_call
+    } else {
+        // Retry voice channel joining with exponential backoff
+        let mut attempts = 0;
+        let max_attempts = 5; // Increased from 3 to 5
+        
+        loop {
+            tracing::info!("Attempting to join voice channel {} in guild {} (attempt {}/{})", 
+                          channel_id, guild_id, attempts + 1, max_attempts);
+            
+            match manager.join(guild_id, channel_id).await {
+                Ok(call_lock) => {
+                    tracing::info!("Successfully joined voice channel after {} attempt(s)", attempts + 1);
+                    
+                    // Update database to track voice connection
+                    let mut db_conn = establish_connection();
+                    if let Err(e) = VoiceConnection::create(&mut db_conn, &guild_id.to_string(), Some(&channel_id.to_string())) {
+                        tracing::warn!("Failed to update database with voice connection: {}", e);
+                    }
+                    
+                    break call_lock;
+                },
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= max_attempts {
+                        return Err(anyhow!("failed to join voice channel after {} attempts: {}. This may be due to network issues, Discord API problems, or insufficient bot permissions.", max_attempts, e));
+                    }
+                    
+                    let delay_ms = std::cmp::min(5000, 1000 * (2_u64.pow(attempts as u32 - 1))); // Exponential backoff with cap at 5s
+                    tracing::warn!("Voice channel join attempt {} failed: {}. Retrying in {}ms...", 
+                                  attempts, e, delay_ms);
+                    
+                    // Wait before retrying (exponential backoff with cap)
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+            }
+        }
+    };
+    
+    if is_new {
+        METRICS.inc_connections();
+    }
 
     // Start download in background and stream progress to the deferred message
     let (mut rx, handle) = spawn_download_mp3(url.to_string());
+
+    // Check song cache first for title and metadata
+    let mut db_conn = establish_connection();
+    let cached_title = SongCache::find_by_url(&mut db_conn, url)
+        .ok()
+        .flatten()
+        .map(|cached| {
+            tracing::info!("Using cached title for {}: {}", url, cached.title);
+            // Update last accessed time
+            let _ = SongCache::update_last_accessed(&mut db_conn, url);
+            cached.title
+        });
+    
+    // Try to get song title - use cache if available, otherwise extract in parallel
+    let title_future = if cached_title.is_some() {
+        None // We already have the title
+    } else {
+        Some(ytdlp_extract_title(url))
+    };
 
     // Progress loop: update message periodically while downloading
     while let Some(DownloadProgress { percent }) = rx.recv().await {
@@ -66,66 +217,75 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
             .await;
     }
 
-    // Wait for completion and enqueue
-    let mp3 = handle.await??;
-    let source: Input = songbird::input::File::new(mp3).into();
+    // Download finished
+    let input_path = handle.await.map_err(|e| anyhow!("download task panicked: {e}"))??;
+    
+    // Create input from the downloaded file path using ffmpeg with specific parameters for consistent playback
+    let source = songbird::input::File::new(input_path);
 
-    let mut call = call_lock.lock().await;
-    // Lower, fixed bitrate can reduce CPU usage and packet size, helping avoid stutter on busy hosts.
-    let br = std::env::var("LYRE_BITRATE")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .filter(|v| *v >= 16_000 && *v <= 192_000)
-        .unwrap_or(96_000);
-    call.set_bitrate(Bitrate::BitsPerSecond(br as i32));
-    let handle: TrackHandle = call.enqueue_input(source).await;
-    // Determine queue position after enqueue. If >1, this track is queued behind current/others.
-    let position = call.queue().len();
-    let target_volume = 0.5f32;
-    if position > 1 {
-        let _ = handle.set_volume(target_volume);
-        drop(call);
-        let _ = cmd
-            .edit_response(
-                &ctx.http,
-                EditInteractionResponse::new().content(format!("Queued, in position {}", position)),
+    // Now setup the track with a notifier for when it ends
+    let track = {
+        let mut call = call_lock.lock().await;
+        let track_handle = call.enqueue_input(source.into()).await;
+
+        // Set track event handler
+        track_handle
+            .add_event(
+                Event::Track(songbird::TrackEvent::End),
+                TrackEndNotifier {
+                    guild_id,
+                    channel_id: cmd.channel_id,
+                    manager: manager.clone(),
+                    http: ctx.http.clone(),
+                },
             )
-            .await;
-        return Ok(());
-    } else {
-        // First in queue: apply optional preroll buffer to mask initial jitters.
-        let preroll_ms = std::env::var("LYRE_PREROLL_MS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .filter(|ms| *ms > 0 && *ms <= 30000)
-            .unwrap_or(0);
-        if preroll_ms > 0 {
-            let _ = handle.set_volume(0.0);
-        } else {
-            let _ = handle.set_volume(target_volume);
-        }
-        drop(call);
+            .map_err(|e| anyhow!("failed to add track event handler: {e}"))?;
 
-        if preroll_ms > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(preroll_ms)).await;
-            let _ = handle.set_volume(target_volume);
-        }
+        track_handle
+    };
+
+    // Get actual title (cached or extracted)
+    let title = if let Some(cached_title) = cached_title {
+        cached_title
+    } else if let Some(future) = title_future {
+        future.await.unwrap_or_else(|_| "Unknown".to_string())
+    } else {
+        "Unknown".to_string()
+    };
+
+    // Log to queue history
+    let mut db_conn = establish_connection();
+    if let Err(e) = QueueHistory::create(&mut db_conn, &guild_id.to_string(), &cmd.user.id.to_string(), url, Some(&title), None) {
+        tracing::warn!("Failed to log queue history: {}", e);
     }
 
-    let _ = cmd
-        .edit_response(
-            &ctx.http,
-            EditInteractionResponse::new().content(format!(
-                "Playing at {} kbps{}!",
-                br / 1000,
-                if std::env::var("LYRE_MIX_MODE").ok().as_deref() == Some("mono") {
-                    " (mono)"
-                } else {
-                    ""
-                }
-            )),
-        )
-        .await;
+    // Update song cache
+    if let Err(e) = SongCache::create_or_update(&mut db_conn, url, &title, None, None, None, None) {
+        tracing::warn!("Failed to update song cache: {}", e);
+    }
+
+    // Send success message
+    let embed = CreateEmbed::new()
+        .title("🎵 Now Playing")
+        .description(&title)
+        .url(url)
+        .colour(0x1db954) // Spotify green
+        .footer(serenity::all::CreateEmbedFooter::new(format!(
+            "Queue position: {} | Duration: Streaming",
+            {
+                let info = track.get_info().await.map_err(|e| anyhow!("failed to get track info: {e}"))?;
+                format!("{:?}", info.position)
+            }
+        )));
+
+    cmd.edit_response(
+        &ctx.http,
+        EditInteractionResponse::new()
+            .content("")
+            .embeds(vec![embed]),
+    )
+    .await?;
+
     Ok(())
 }
 

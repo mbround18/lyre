@@ -56,7 +56,15 @@ In any server where the bot is present:
 - Use `/next` to skip the current track
 - Use `/stop` to stop, clear the queue, and disconnect
 
-The bot will join your voice channel, download or reuse a cached MP3 by video ID, and start playback.
+### Enhanced Features
+
+- **Rich Embeds**: When playing songs, the bot displays rich embeds with clickable links to the original source
+- **Queue Management**: Songs show their position in queue when multiple tracks are queued
+- **Auto-disconnect**: The bot automatically disconnects when the queue is empty after a song finishes
+- **Next Song Announcements**: When skipping tracks, embeds show the queue status
+- **Graceful Shutdown**: The bot responds properly to Ctrl+C (SIGINT) and SIGTERM signals
+
+The bot will join your voice channel, download or reuse a cached MP3 by video ID, and start playback with rich Discord embeds showing song information.
 
 ## Troubleshooting
 

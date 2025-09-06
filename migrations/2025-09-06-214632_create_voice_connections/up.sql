@@ -1,0 +1,6 @@
+CREATE TABLE voice_connections (
+    guild_id TEXT PRIMARY KEY NOT NULL,
+    connected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    channel_id TEXT,
+    last_activity DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -1,0 +1,23 @@
+services:
+  lyre:
+    image: mbround18/lyre:${VERSION:-latest}
+    container_name: lyre
+    restart: unless-stopped
+    user: 1000:1000
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      # Required environment variables
+      # - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - RUST_LOG=${RUST_LOG:-info}
+      # Bind address for the embedded HTTP server
+      - LYRE_HTTP_BIND=${LYRE_HTTP_BIND:-0.0.0.0:3000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./tmp:/data
+
+volumes: {}

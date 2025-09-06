@@ -8,10 +8,10 @@ pub fn read_discord_token() -> Result<String> {
         "DOCKER_TOKEN",
     ];
     for key in CANDIDATES {
-        if let Ok(val) = std::env::var(key) {
-            if !val.is_empty() {
-                return Ok(val);
-            }
+        if let Ok(val) = std::env::var(key)
+            && !val.is_empty()
+        {
+            return Ok(val);
         }
     }
     Err(anyhow!(
