@@ -1,6 +1,19 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    current_queue (id) {
+        id -> Nullable<Integer>,
+        guild_id -> Text,
+        url -> Text,
+        title -> Nullable<Text>,
+        duration -> Nullable<Integer>,
+        position -> Integer,
+        added_by -> Text,
+        added_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     guild_settings (guild_id) {
         guild_id -> Text,
         default_volume -> Float,
@@ -44,10 +57,13 @@ diesel::table! {
         connected_at -> Timestamp,
         channel_id -> Nullable<Text>,
         last_activity -> Timestamp,
+        current_track_title -> Nullable<Text>,
+        is_playing -> Bool,
     }
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
+    current_queue,
     guild_settings,
     queue_history,
     song_cache,

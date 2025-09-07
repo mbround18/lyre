@@ -119,9 +119,11 @@ async fn ytdlp_extract_id(ytdlp: &PathBuf, url: &str) -> Result<String> {
         .await
         .context("running yt-dlp to extract id")?;
     if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(anyhow!(
-            "yt-dlp --print id failed with status: {}",
-            out.status
+            "yt-dlp --print id failed with status: {}. Error: {}",
+            out.status,
+            stderr.trim()
         ));
     }
     let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -144,9 +146,11 @@ pub async fn ytdlp_extract_title(url: &str) -> Result<String> {
         .await
         .context("running yt-dlp to extract title")?;
     if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(anyhow!(
-            "yt-dlp --print title failed with status: {}",
-            out.status
+            "yt-dlp --print title failed with status: {}. Error: {}",
+            out.status,
+            stderr.trim()
         ));
     }
     let title = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -243,19 +247,35 @@ pub fn spawn_download_mp3(
         if let Some(stderr) = child.stderr.take() {
             let mut reader = BufReader::new(stderr).lines();
             let mut last_sent = 255u8; // impossible value to force first update
+            let mut error_lines = Vec::new();
             while let Some(Ok(line)) = reader.next_line().await.transpose() {
                 if let Some(pct) = parse_percent(&line)
                     && pct != last_sent
                 {
                     let _ = tx.send(DownloadProgress { percent: pct });
                     last_sent = pct;
+                } else if line.contains("ERROR") || line.contains("error") {
+                    error_lines.push(line);
                 }
             }
-        }
 
-        let status = child.wait().await.context("waiting for yt-dlp")?;
-        if !status.success() {
-            return Err(anyhow!("yt-dlp failed with status: {status}"));
+            let status = child.wait().await.context("waiting for yt-dlp")?;
+            if !status.success() {
+                let error_msg = if error_lines.is_empty() {
+                    format!("yt-dlp failed with status: {status}")
+                } else {
+                    format!(
+                        "yt-dlp failed with status: {status}. Errors: {}",
+                        error_lines.join("; ")
+                    )
+                };
+                return Err(anyhow!(error_msg));
+            }
+        } else {
+            let status = child.wait().await.context("waiting for yt-dlp")?;
+            if !status.success() {
+                return Err(anyhow!("yt-dlp failed with status: {status}"));
+            }
         }
 
         // Find produced mp3 in the unique dir

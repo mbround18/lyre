@@ -1730,6 +1730,7 @@ dependencies = [
  "diesel",
  "dirs",
  "dotenvy",
+ "futures-util",
  "once_cell",
  "reqwest 0.12.23",
  "serde",

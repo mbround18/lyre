@@ -7,15 +7,19 @@ use serenity::{
     async_trait,
 };
 use songbird::{Config as VoiceConfig, driver::MixMode, serenity::SerenityInit};
+use std::sync::Arc;
 use tracing::{error, info};
 
 mod api;
 mod audio;
 mod auth;
+mod bot_bridge;
 mod commands;
 mod database;
 mod env;
 mod metrics;
+mod middleware;
+mod voice_manager;
 mod web_api;
 
 struct Handler;
@@ -24,6 +28,26 @@ struct Handler;
 impl serenity::prelude::EventHandler for Handler {
     async fn ready(&self, ctx: SerenityContext, ready: Ready) {
         info!("Logged in as {}", ready.user.name);
+
+        // Clear any stale voice connection records from database
+        // When the bot restarts, it's not actually connected to any voice channels
+        {
+            use crate::database::{establish_connection, models::VoiceConnection};
+            let mut db_conn = establish_connection();
+            match VoiceConnection::clear_all_connections(&mut db_conn) {
+                Ok(cleared) => {
+                    if cleared > 0 {
+                        info!(
+                            "Cleared {} stale voice connection records from database",
+                            cleared
+                        );
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to clear voice connection records: {}", e);
+                }
+            }
+        }
 
         // Log an invite URL with minimal required voice permissions
         let perms = Permissions::CONNECT | Permissions::SPEAK;
@@ -61,6 +85,12 @@ impl serenity::prelude::EventHandler for Handler {
 
         // Mark ready for probes once we've registered commands
         metrics::METRICS.set_ready(true);
+
+        // Start background task to process voice channel join requests from API
+        let ctx_clone = ctx.clone();
+        tokio::spawn(async move {
+            voice_manager::process_voice_requests(Arc::new(ctx_clone)).await;
+        });
     }
 
     async fn interaction_create(&self, ctx: SerenityContext, interaction: Interaction) {
@@ -112,7 +142,7 @@ async fn main() -> Result<()> {
             Ok("mono") => MixMode::Mono,
             _ => MixMode::Stereo,
         };
-            
+
         VoiceConfig::default()
             .preallocated_tracks(2)
             .use_softclip(false)

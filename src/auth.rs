@@ -26,6 +26,7 @@ pub struct UserGuild {
     pub permissions: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     #[allow(dead_code)]
     pub user: DiscordUser,
@@ -88,40 +89,12 @@ impl FromRequest for AuthenticatedUser {
     }
 }
 
-// Helper function to validate and get authenticated user data from request
-pub async fn get_authenticated_user_from_request(req: &HttpRequest) -> Result<AuthenticatedUser> {
-    if let Some(token) = req.extensions().get::<String>() {
-        if token.starts_with("demo_") {
-            let user = DiscordUser {
-                id: "123456789".to_string(),
-                username: "demouser".to_string(),
-                discriminator: "0000".to_string(),
-                avatar: None,
-                global_name: Some("Demo User".to_string()),
-            };
-
-            let guilds = vec![UserGuild {
-                id: "987654321".to_string(),
-                name: "Demo Server".to_string(),
-                icon: None,
-                owner: true,
-                permissions: "8".to_string(),
-            }];
-
-            return Ok(AuthenticatedUser { user, guilds });
-        }
-
-        // Validate real Discord token
-        match validate_discord_token(token).await {
-            Ok(user) => match get_user_guilds(token).await {
-                Ok(guilds) => Ok(AuthenticatedUser { user, guilds }),
-                Err(e) => Err(anyhow!("Failed to get user guilds: {}", e)),
-            },
-            Err(e) => Err(anyhow!("Invalid token: {}", e)),
-        }
-    } else {
-        Err(anyhow!("No token found in request"))
-    }
+// Helper function to get authenticated user from request extensions (set by middleware)
+pub fn get_authenticated_user_from_extensions(req: &HttpRequest) -> Result<AuthenticatedUser> {
+    req.extensions()
+        .get::<AuthenticatedUser>()
+        .cloned()
+        .ok_or_else(|| anyhow!("No authenticated user found in request extensions"))
 }
 
 /// Validate a Discord access token by calling Discord's API
