@@ -81,12 +81,14 @@ pub async fn get_guild_settings(
         Ok(Some(settings)) => {
             let allowed_roles: Vec<String> = settings
                 .allowed_roles
-                .and_then(|s| serde_json::from_str(&s).ok())
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
                 .unwrap_or_default();
 
             let blocked_domains: Vec<String> = settings
                 .blocked_domains
-                .and_then(|s| serde_json::from_str(&s).ok())
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
                 .unwrap_or_default();
 
             let response = GuildSettingsResponse {

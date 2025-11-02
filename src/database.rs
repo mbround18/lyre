@@ -11,5 +11,6 @@ pub fn establish_connection() -> SqliteConnection {
         .unwrap_or_else(|_| panic!("Error connecting to {}", database_url))
 }
 
+#[path = "database/models/mod.rs"]
 pub mod models;
 pub mod schema;
