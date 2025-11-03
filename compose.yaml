@@ -3,7 +3,6 @@ services:
     image: mbround18/lyre:${VERSION:-latest}
     container_name: lyre
     restart: unless-stopped
-    user: 1000:1000
     build:
       context: .
       dockerfile: Dockerfile
@@ -15,9 +14,14 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       # Bind address for the embedded HTTP server
       - LYRE_HTTP_BIND=${LYRE_HTTP_BIND:-0.0.0.0:3000}
+      # Optional: Path to cookies file for authenticated downloads
+      # - COOKIES_FILE=/data/cookies/cookies.txt
     ports:
       - "3000:3000"
     volumes:
-      - ./tmp:/data
+      - lyre-data:/data
+      # Optional: Mount your cookies.txt file for authenticated downloads
+      # - ./cookies.txt:/data/cookies/cookies.txt:ro
 
-volumes: {}
+volumes:
+  lyre-data:

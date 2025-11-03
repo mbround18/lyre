@@ -75,6 +75,7 @@ impl serenity::prelude::EventHandler for Handler {
         // Register global slash commands
         for def in [
             commands::play::definition(),
+            commands::playlist::register(),
             commands::next::definition(),
             commands::stop::definition(),
         ] {
@@ -99,6 +100,11 @@ impl serenity::prelude::EventHandler for Handler {
                 "play" => {
                     if let Err(why) = commands::play::handle(&ctx, &cmd).await {
                         error!("/play failed: {why:?}");
+                    }
+                }
+                "playlist" => {
+                    if let Err(why) = commands::playlist::run(&ctx, &cmd).await {
+                        error!("/playlist failed: {why:?}");
                     }
                 }
                 "next" => {

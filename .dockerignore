@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Development
+.env
+.env.local
+.env.*.local
+*.log
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation
+README.md
+LICENSE
+*.md
+
+# Docker
+Dockerfile
+.dockerignore
+compose.yaml
+docker-compose*.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Database (development)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Rust-analyzer
+rust-analyzer/
+
+# Testing
+tests/
+benches/
+
+# Cache
+.cache/
+*.rdb

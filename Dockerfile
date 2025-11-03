@@ -39,30 +39,36 @@ FROM debian:trixie-slim AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tzdata tini ffmpeg yt-dlp libopus0 \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata tini ffmpeg yt-dlp libopus0 aria2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
 ARG USER=lyre
 ARG UID=10001
 RUN useradd -m -u ${UID} -s /bin/bash ${USER}
-WORKDIR /app
 
 # Data/cache directories (mounted as volume by default)
 ENV HOME=/home/${USER}
 ENV XDG_CACHE_HOME=/data/cache
 ENV DOWNLOAD_FOLDER=/data/downloads
-# Create data dirs with proper ownership, then drop privileges
-RUN mkdir -p /data/cache /data/downloads \
-    && chown -R ${USER}:${USER} /data
+
+# Create data dirs with proper ownership
+RUN mkdir -p /data/cache /data/downloads /data/cookies /app \
+    && chown -R ${USER}:${USER} /data /app
+
+# Drop privileges
 USER ${USER}
+WORKDIR /app
 VOLUME ["/data"]
 
 # Copy the compiled binary
 COPY --from=builder /app/target/release/lyre /usr/local/bin/lyre
 
+COPY ./static ./static
+
 # Sensible defaults
 ENV RUST_LOG=info
+ENV DATABASE_URL=/data/lyre.db
 
 # No ports exposed (Discord bot is outbound only)
 # Web server listens on 3000

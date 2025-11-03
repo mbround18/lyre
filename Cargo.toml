@@ -26,8 +26,10 @@ actix-web-httpauth = "0.8.2"
 base64 = "0.22.1"
 walkdir = "2.5.0"
 diesel = { version = "2.3.3", features = ["sqlite", "chrono", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2.3.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 futures-util = "0.3.31"
+num_cpus = "1.17.0"
 
 [profile.dev]
 # Optimize dev builds to reduce runtime hiccups without needing --release
@@ -42,3 +44,4 @@ panic = "abort"         # smaller binary; abort on panic
 debug = 0               # no debug info in final artifact
 incremental = false     # full optimization, no incremental artifacts
 strip = "symbols"       # strip symbols to reduce size
+

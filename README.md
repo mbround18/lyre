@@ -30,6 +30,12 @@ DISCORD_TOKEN=your-bot-token-here
 
 # Start tracks muted for N milliseconds, then raise to 0.5 volume (masks initial jitters)
 # LYRE_PREROLL_MS=100
+
+# Optional: Path to cookies.txt for authenticated downloads (your own content, private videos)
+# COOKIES_FILE=/path/to/cookies.txt
+
+# Optional: Override auto-detected ffmpeg thread count (auto-detects 75% of CPU cores, 2-8 range)
+# FFMPEG_THREADS=4
 ```
 
 3. Build and run:
@@ -52,7 +58,8 @@ Notes:
 In any server where the bot is present:
 
 - Join a voice channel
-- Run `/play url:<link>` in a text channel
+- Run `/play url:<link>` in a text channel to play a single video (playlists are automatically skipped)
+- Run `/playlist url:<playlist-link>` to queue an entire playlist (videos over 70 minutes are skipped)
 - Use `/next` to skip the current track
 - Use `/stop` to stop, clear the queue, and disconnect
 
@@ -65,6 +72,32 @@ In any server where the bot is present:
 - **Graceful Shutdown**: The bot responds properly to Ctrl+C (SIGINT) and SIGTERM signals
 
 The bot will join your voice channel, download or reuse a cached MP3 by video ID, and start playback with rich Discord embeds showing song information.
+
+## Authenticated Downloads (Cookies)
+
+To download your own private content or videos requiring authentication:
+
+1. Export cookies from your browser using an extension like "Get cookies.txt LOCALLY" or similar
+2. Save the cookies as `cookies.txt`
+3. Mount the file in Docker or set `COOKIES_FILE` environment variable:
+
+**Docker Compose:**
+
+```yaml
+volumes:
+  - ./cookies.txt:/data/cookies/cookies.txt:ro
+environment:
+  - COOKIES_FILE=/data/cookies/cookies.txt
+```
+
+**Local development:**
+
+```bash
+export COOKIES_FILE=/path/to/cookies.txt
+cargo run --release
+```
+
+The bot will automatically use cookies when set, allowing downloads of authenticated content.
 
 ## Troubleshooting
 

@@ -7,7 +7,7 @@ use serenity::async_trait;
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, Songbird};
 use std::sync::Arc;
 
-use crate::audio::{DownloadProgress, spawn_download_mp3, ytdlp_extract_title};
+use crate::audio::{spawn_download_mp3, ytdlp_extract_title};
 use crate::database::establish_connection;
 use crate::database::models::{CurrentQueue, QueueHistory, SongCache, VoiceConnection};
 use crate::metrics::METRICS;
@@ -281,16 +281,61 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         Some(ytdlp_extract_title(url))
     };
 
-    // Progress loop: update message periodically while downloading
-    while let Some(DownloadProgress { percent }) = rx.recv().await {
-        let bar = text_bar(percent);
-        let _ = cmd
-            .edit_response(
-                &ctx.http,
-                EditInteractionResponse::new()
-                    .content(format!("Downloading… {} {}%", bar, percent)),
-            )
-            .await;
+    // Progress loop: update message periodically while downloading/converting
+    while let Some(progress) = rx.recv().await {
+        match progress.status.as_str() {
+            "queued" => {
+                let _ = cmd
+                    .edit_response(
+                        &ctx.http,
+                        EditInteractionResponse::new().content("Queued..."),
+                    )
+                    .await;
+            }
+            "downloading" => {
+                if let Some(pct) = progress.percent {
+                    let bar = text_bar(pct);
+                    let _ = cmd
+                        .edit_response(
+                            &ctx.http,
+                            EditInteractionResponse::new()
+                                .content(format!("Downloading… {} {}%", bar, pct)),
+                        )
+                        .await;
+                } else {
+                    let _ = cmd
+                        .edit_response(
+                            &ctx.http,
+                            EditInteractionResponse::new().content("Downloading…"),
+                        )
+                        .await;
+                }
+            }
+            "converting" => {
+                let _ = cmd
+                    .edit_response(
+                        &ctx.http,
+                        EditInteractionResponse::new().content("Converting…"),
+                    )
+                    .await;
+            }
+            "done" => {
+                let _ = cmd
+                    .edit_response(
+                        &ctx.http,
+                        EditInteractionResponse::new().content("Ready — starting playback"),
+                    )
+                    .await;
+            }
+            other => {
+                let _ = cmd
+                    .edit_response(
+                        &ctx.http,
+                        EditInteractionResponse::new().content(format!("{}", other)),
+                    )
+                    .await;
+            }
+        }
     }
 
     // Download finished
