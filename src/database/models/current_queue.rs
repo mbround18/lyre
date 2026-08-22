@@ -6,7 +6,7 @@ use crate::database::schema::current_queue;
 
 #[derive(Queryable, Selectable, Serialize, Deserialize, Debug)]
 #[diesel(table_name = current_queue)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct CurrentQueue {
     pub id: Option<i32>,
     pub guild_id: String,
@@ -31,7 +31,7 @@ pub struct NewCurrentQueue {
 
 impl CurrentQueue {
     pub fn get_guild_queue(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
     ) -> QueryResult<Vec<CurrentQueue>> {
         current_queue::table
@@ -42,7 +42,7 @@ impl CurrentQueue {
     }
 
     pub fn get_current_track(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
     ) -> QueryResult<Option<CurrentQueue>> {
         current_queue::table
@@ -54,7 +54,7 @@ impl CurrentQueue {
     }
 
     pub fn add_to_queue(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         url: &str,
         title: Option<&str>,
@@ -92,7 +92,7 @@ impl CurrentQueue {
             .first::<CurrentQueue>(conn)
     }
 
-    pub fn advance_queue(conn: &mut SqliteConnection, guild_id: &str) -> QueryResult<()> {
+    pub fn advance_queue(conn: &mut PgConnection, guild_id: &str) -> QueryResult<()> {
         // Remove current track (position 0)
         diesel::delete(current_queue::table)
             .filter(current_queue::guild_id.eq(guild_id))
@@ -109,7 +109,7 @@ impl CurrentQueue {
     }
 
     #[allow(dead_code)]
-    pub fn clear_guild_queue(conn: &mut SqliteConnection, guild_id: &str) -> QueryResult<usize> {
+    pub fn clear_guild_queue(conn: &mut PgConnection, guild_id: &str) -> QueryResult<usize> {
         diesel::delete(current_queue::table)
             .filter(current_queue::guild_id.eq(guild_id))
             .execute(conn)

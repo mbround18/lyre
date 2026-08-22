@@ -6,7 +6,7 @@ use crate::database::schema::voice_connections;
 
 #[derive(Queryable, Selectable, Serialize, Deserialize, Debug)]
 #[diesel(table_name = voice_connections)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct VoiceConnection {
     pub guild_id: String,
     pub connected_at: NaiveDateTime,
@@ -25,7 +25,7 @@ pub struct NewVoiceConnection {
 
 impl VoiceConnection {
     pub fn create(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         channel_id: Option<&str>,
     ) -> QueryResult<VoiceConnection> {
@@ -43,7 +43,7 @@ impl VoiceConnection {
     }
 
     pub fn create_or_update(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         channel_id: Option<&str>,
     ) -> QueryResult<VoiceConnection> {
@@ -66,7 +66,7 @@ impl VoiceConnection {
     }
 
     pub fn find_by_guild_id(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
     ) -> QueryResult<Option<VoiceConnection>> {
         voice_connections::table
@@ -76,38 +76,38 @@ impl VoiceConnection {
             .optional()
     }
 
-    pub fn update_last_activity(conn: &mut SqliteConnection, guild_id: &str) -> QueryResult<usize> {
+    pub fn update_last_activity(conn: &mut PgConnection, guild_id: &str) -> QueryResult<usize> {
         diesel::update(voice_connections::table)
             .filter(voice_connections::guild_id.eq(guild_id))
             .set(voice_connections::last_activity.eq(chrono::Utc::now().naive_utc()))
             .execute(conn)
     }
 
-    pub fn disconnect(conn: &mut SqliteConnection, guild_id: &str) -> QueryResult<usize> {
+    pub fn disconnect(conn: &mut PgConnection, guild_id: &str) -> QueryResult<usize> {
         diesel::delete(voice_connections::table)
             .filter(voice_connections::guild_id.eq(guild_id))
             .execute(conn)
     }
 
-    pub fn get_all_connected(conn: &mut SqliteConnection) -> QueryResult<Vec<VoiceConnection>> {
+    pub fn get_all_connected(conn: &mut PgConnection) -> QueryResult<Vec<VoiceConnection>> {
         voice_connections::table
             .select(VoiceConnection::as_select())
             .load::<VoiceConnection>(conn)
     }
 
-    pub fn is_connected(conn: &mut SqliteConnection, guild_id: &str) -> bool {
+    pub fn is_connected(conn: &mut PgConnection, guild_id: &str) -> bool {
         Self::find_by_guild_id(conn, guild_id)
             .map(|result| result.is_some())
             .unwrap_or(false)
     }
 
-    pub fn clear_all_connections(conn: &mut SqliteConnection) -> QueryResult<usize> {
+    pub fn clear_all_connections(conn: &mut PgConnection) -> QueryResult<usize> {
         diesel::delete(voice_connections::table).execute(conn)
     }
 
     /// Get voice connections that have a channel_id set but may need to be joined
     /// This is used to process API requests for joining voice channels
-    pub fn get_pending_joins(conn: &mut SqliteConnection) -> QueryResult<Vec<VoiceConnection>> {
+    pub fn get_pending_joins(conn: &mut PgConnection) -> QueryResult<Vec<VoiceConnection>> {
         voice_connections::table
             .filter(voice_connections::channel_id.is_not_null())
             .select(VoiceConnection::as_select())
@@ -115,7 +115,7 @@ impl VoiceConnection {
     }
 
     /// Delete a voice connection record
-    pub fn delete(conn: &mut SqliteConnection, guild_id: &str) -> QueryResult<usize> {
+    pub fn delete(conn: &mut PgConnection, guild_id: &str) -> QueryResult<usize> {
         diesel::delete(voice_connections::table)
             .filter(voice_connections::guild_id.eq(guild_id))
             .execute(conn)
@@ -123,7 +123,7 @@ impl VoiceConnection {
 
     /// Update playing status and current track
     pub fn update_playing_status(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         is_playing: bool,
         current_track_title: Option<&str>,

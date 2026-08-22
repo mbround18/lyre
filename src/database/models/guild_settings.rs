@@ -6,7 +6,7 @@ use crate::database::schema::guild_settings;
 
 #[derive(Queryable, Selectable, Serialize, Deserialize, Debug)]
 #[diesel(table_name = guild_settings)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct GuildSettings {
     pub guild_id: String,
     pub default_volume: f32,
@@ -31,7 +31,7 @@ pub struct NewGuildSettings {
 
 impl GuildSettings {
     pub fn create_or_update(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
     ) -> QueryResult<GuildSettings> {
         let new_settings = NewGuildSettings {
@@ -54,7 +54,7 @@ impl GuildSettings {
     }
 
     pub fn find_by_guild_id(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
     ) -> QueryResult<Option<GuildSettings>> {
         guild_settings::table
@@ -64,7 +64,7 @@ impl GuildSettings {
     }
 
     pub fn update_volume(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         volume: f32,
     ) -> QueryResult<usize> {
@@ -78,7 +78,7 @@ impl GuildSettings {
     }
 
     pub fn update_auto_disconnect(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         minutes: i32,
     ) -> QueryResult<usize> {
@@ -92,7 +92,7 @@ impl GuildSettings {
     }
 
     pub fn update_max_queue_size(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         size: i32,
     ) -> QueryResult<usize> {

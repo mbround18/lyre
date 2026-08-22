@@ -7,16 +7,16 @@ use serenity::async_trait;
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, Songbird};
 use std::sync::Arc;
 
-use crate::audio::{spawn_download_mp3, ytdlp_extract_title};
+
 use crate::database::establish_connection;
 use crate::database::models::{CurrentQueue, QueueHistory, SongCache, VoiceConnection};
 use crate::metrics::METRICS;
 
-struct TrackEndNotifier {
-    guild_id: serenity::all::GuildId,
-    channel_id: serenity::all::ChannelId,
-    manager: Arc<Songbird>,
-    http: Arc<serenity::http::Http>,
+pub struct TrackEndNotifier {
+    pub guild_id: serenity::all::GuildId,
+    pub channel_id: serenity::all::ChannelId,
+    pub manager: Arc<Songbird>,
+    pub http: Arc<serenity::http::Http>,
 }
 
 #[async_trait]
@@ -31,55 +31,41 @@ impl VoiceEventHandler for TrackEndNotifier {
         }
 
         // Check if queue is empty after this track ends
-        if let Some(call_lock) = self.manager.get(self.guild_id) {
-            let call = call_lock.lock().await;
-            let queue_len = call.queue().len();
-            drop(call);
+        let db_queue_empty = {
+            let mut db_conn = establish_connection();
+            match CurrentQueue::get_current_track(&mut db_conn, &self.guild_id.to_string()) {
+                Ok(Some(_)) => false,
+                _ => true,
+            }
+        };
 
-            if queue_len == 0 {
-                // Queue is empty, disconnect
-                let _ = self.manager.remove(self.guild_id).await;
+        if db_queue_empty {
+            // Queue is empty, disconnect
+            let _ = self.manager.remove(self.guild_id).await;
 
-                // Update database to mark as not playing
-                {
-                    let mut db_conn = establish_connection();
-                    if let Err(e) = VoiceConnection::update_playing_status(
-                        &mut db_conn,
-                        &self.guild_id.to_string(),
-                        false,
-                        None,
-                    ) {
-                        tracing::warn!("Failed to update playing status on disconnect: {}", e);
-                    }
-                }
-
-                // Send a message to the channel
-                let embed = CreateEmbed::new()
-                    .title("🎵 Queue Finished")
-                    .description(
-                        "All songs have finished playing. Disconnected from voice channel.",
-                    )
-                    .colour(0x808080); // Gray
-
-                let _ = self
-                    .channel_id
-                    .send_message(&self.http, CreateMessage::new().embeds(vec![embed]))
-                    .await;
-            } else {
-                // Update database with next track info if available
+            // Update database to mark as not playing
+            {
                 let mut db_conn = establish_connection();
-                if let Ok(Some(next_track)) =
-                    CurrentQueue::get_current_track(&mut db_conn, &self.guild_id.to_string())
-                    && let Err(e) = VoiceConnection::update_playing_status(
-                        &mut db_conn,
-                        &self.guild_id.to_string(),
-                        true,
-                        next_track.title.as_deref(),
-                    )
-                {
-                    tracing::warn!("Failed to update playing status with next track: {}", e);
+                if let Err(e) = VoiceConnection::update_playing_status(
+                    &mut db_conn,
+                    &self.guild_id.to_string(),
+                    false,
+                    None,
+                ) {
+                    tracing::warn!("Failed to update playing status on disconnect: {}", e);
                 }
             }
+
+            // Send a message to the channel
+            let embed = CreateEmbed::new()
+                .title("🎵 Queue Finished")
+                .description("All songs have finished playing. Disconnected from voice channel.")
+                .colour(0x808080); // Gray
+
+            let _ = self
+                .channel_id
+                .send_message(&self.http, CreateMessage::new().embeds(vec![embed]))
+                .await;
         }
         None
     }
@@ -185,7 +171,7 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
     let is_new = manager.get(guild_id).is_none();
 
     // Check if we're already connected to avoid unnecessary joins
-    let call_lock = if let Some(existing_call) = manager.get(guild_id) {
+    let _call_lock = if let Some(existing_call) = manager.get(guild_id) {
         tracing::info!(
             "Already connected to voice channel in guild {}, reusing connection",
             guild_id
@@ -259,9 +245,6 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         }
     }
 
-    // Start download in background and stream progress to the deferred message
-    let (mut rx, handle) = spawn_download_mp3(url.to_string());
-
     // Check song cache first for title and metadata
     let mut db_conn = establish_connection();
     let cached_title = SongCache::find_by_url(&mut db_conn, url)
@@ -274,110 +257,17 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
             cached.title
         });
 
-    // Try to get song title - use cache if available, otherwise extract in parallel
-    let title_future = if cached_title.is_some() {
-        None // We already have the title
+    // Try to get song title - use cache if available, otherwise extract
+    let title = if let Some(t) = cached_title {
+        t
     } else {
-        Some(ytdlp_extract_title(url))
-    };
-
-    // Progress loop: update message periodically while downloading/converting
-    while let Some(progress) = rx.recv().await {
-        match progress.status.as_str() {
-            "queued" => {
-                let _ = cmd
-                    .edit_response(
-                        &ctx.http,
-                        EditInteractionResponse::new().content("Queued..."),
-                    )
-                    .await;
-            }
-            "downloading" => {
-                if let Some(pct) = progress.percent {
-                    let bar = text_bar(pct);
-                    let _ = cmd
-                        .edit_response(
-                            &ctx.http,
-                            EditInteractionResponse::new()
-                                .content(format!("Downloading… {} {}%", bar, pct)),
-                        )
-                        .await;
-                } else {
-                    let _ = cmd
-                        .edit_response(
-                            &ctx.http,
-                            EditInteractionResponse::new().content("Downloading…"),
-                        )
-                        .await;
-                }
-            }
-            "converting" => {
-                let _ = cmd
-                    .edit_response(
-                        &ctx.http,
-                        EditInteractionResponse::new().content("Converting…"),
-                    )
-                    .await;
-            }
-            "done" => {
-                let _ = cmd
-                    .edit_response(
-                        &ctx.http,
-                        EditInteractionResponse::new().content("Ready — starting playback"),
-                    )
-                    .await;
-            }
-            other => {
-                let _ = cmd
-                    .edit_response(
-                        &ctx.http,
-                        EditInteractionResponse::new().content(format!("{}", other)),
-                    )
-                    .await;
-            }
-        }
-    }
-
-    // Download finished
-    let input_path = handle
-        .await
-        .map_err(|e| anyhow!("download task panicked: {e}"))??;
-
-    // Create input from the downloaded file path using ffmpeg with specific parameters for consistent playback
-    let source = songbird::input::File::new(input_path);
-
-    // Now setup the track with a notifier for when it ends
-    let track = {
-        let mut call = call_lock.lock().await;
-        let track_handle = call.enqueue_input(source.into()).await;
-
-        // Set track event handler
-        track_handle
-            .add_event(
-                Event::Track(songbird::TrackEvent::End),
-                TrackEndNotifier {
-                    guild_id,
-                    channel_id: cmd.channel_id,
-                    manager: manager.clone(),
-                    http: ctx.http.clone(),
-                },
-            )
-            .map_err(|e| anyhow!("failed to add track event handler: {e}"))?;
-
-        track_handle
-    };
-
-    // Get actual title (cached or extracted)
-    let title = if let Some(cached_title) = cached_title {
-        cached_title
-    } else if let Some(future) = title_future {
-        future.await.unwrap_or_else(|_| "Unknown".to_string())
-    } else {
-        "Unknown".to_string()
+        crate::audio::get_or_fetch_metadata(url)
+            .await
+            .map(|m| m.title)
+            .unwrap_or_else(|_| "Unknown".to_string())
     };
 
     // Log to queue history
-    let mut db_conn = establish_connection();
     if let Err(e) = QueueHistory::create(
         &mut db_conn,
         &guild_id.to_string(),
@@ -388,11 +278,11 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
     ) {
         tracing::warn!("Failed to log queue history: {}", e);
     } else {
-        // Increment queue metric on successful queue addition
         METRICS.inc_queue(1);
     }
 
     // Add to current queue tracking
+    // This will trigger pg_notify, and the background listener will handle playback
     if let Err(e) = CurrentQueue::add_to_queue(
         &mut db_conn,
         &guild_id.to_string(),
@@ -404,16 +294,6 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         tracing::warn!("Failed to add track to current queue: {}", e);
     }
 
-    // Update voice connection to mark as playing
-    if let Err(e) = VoiceConnection::update_playing_status(
-        &mut db_conn,
-        &guild_id.to_string(),
-        true,
-        Some(&title),
-    ) {
-        tracing::warn!("Failed to update playing status: {}", e);
-    }
-
     // Update song cache
     if let Err(e) = SongCache::create_or_update(&mut db_conn, url, &title, None, None, None, None) {
         tracing::warn!("Failed to update song cache: {}", e);
@@ -421,20 +301,10 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
 
     // Send success message
     let embed = CreateEmbed::new()
-        .title("🎵 Now Playing")
+        .title("🎵 Added to Queue")
         .description(&title)
         .url(url)
-        .colour(0x1db954) // Spotify green
-        .footer(serenity::all::CreateEmbedFooter::new(format!(
-            "Queue position: {} | Duration: Streaming",
-            {
-                let info = track
-                    .get_info()
-                    .await
-                    .map_err(|e| anyhow!("failed to get track info: {e}"))?;
-                format!("{:?}", info.position)
-            }
-        )));
+        .colour(0x1db954); // Spotify green
 
     cmd.edit_response(
         &ctx.http,

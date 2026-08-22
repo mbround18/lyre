@@ -92,6 +92,12 @@ impl serenity::prelude::EventHandler for Handler {
         tokio::spawn(async move {
             voice_manager::process_voice_requests(Arc::new(ctx_clone)).await;
         });
+
+        // Start pg_notify listener
+        let ctx_listener = ctx.clone();
+        tokio::spawn(async move {
+            crate::database::start_listener(Arc::new(ctx_listener)).await;
+        });
     }
 
     async fn interaction_create(&self, ctx: SerenityContext, interaction: Interaction) {

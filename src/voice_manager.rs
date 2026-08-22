@@ -170,3 +170,128 @@ pub async fn process_voice_requests(ctx: Arc<SerenityContext>) {
         }
     }
 }
+
+/// Process a queue update notification from PostgreSQL
+pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
+    let guild_id = match guild_id_str.parse::<u64>() {
+        Ok(id) => GuildId::new(id),
+        Err(_) => return,
+    };
+
+    let manager = songbird::get(ctx).await.unwrap().clone();
+    
+    // Ensure we are connected to the voice channel
+    if manager.get(guild_id).is_none() {
+        // If not connected, maybe we shouldn't start playback, or we should connect if channel is known.
+        // For now, if we are not connected, we can't play.
+        return;
+    }
+
+    // Check if we are already playing something
+    let is_playing = if let Some(call_lock) = manager.get(guild_id) {
+        let call = call_lock.lock().await;
+        !call.queue().is_empty()
+    } else {
+        false
+    };
+
+    if is_playing {
+        // Already playing, just wait for TrackEndNotifier to advance the queue
+        return;
+    }
+
+    // Not playing. Fetch the next track from the database.
+    let next_track = {
+        use crate::database::models::CurrentQueue;
+        let mut db_conn = establish_connection();
+        match CurrentQueue::get_current_track(&mut db_conn, guild_id_str) {
+            Ok(Some(track)) => track,
+            Ok(None) => return, // Queue is empty
+            Err(e) => {
+                error!("Failed to fetch next track for playback: {}", e);
+                return;
+            }
+        }
+    };
+
+    // We have a track to play. Start downloading and playing it.
+    info!("Starting background playback for: {}", next_track.url);
+    
+    // 1. Download
+    let (mut rx, download_handle) = crate::audio::spawn_download_mp3(next_track.url.clone());
+    
+    // We can optionally process the progress stream here, but since this is background we can just drain it
+    while let Some(_) = rx.recv().await {}
+
+    let input_path = match download_handle.await {
+        Ok(Ok(path)) => path,
+        Err(e) => {
+            error!("Download task panicked: {}", e);
+            // Advance queue since this track failed
+            let mut db_conn = establish_connection();
+            let _ = crate::database::models::CurrentQueue::advance_queue(&mut db_conn, guild_id_str);
+            return;
+        }
+        Ok(Err(e)) => {
+            error!("Failed to download track: {}", e);
+            let mut db_conn = establish_connection();
+            let _ = crate::database::models::CurrentQueue::advance_queue(&mut db_conn, guild_id_str);
+            return;
+        }
+    };
+
+    // 2. Play
+    let source = songbird::input::File::new(input_path);
+    if let Some(call_lock) = manager.get(guild_id) {
+        let mut call = call_lock.lock().await;
+        let track_handle = call.enqueue_input(source.into()).await;
+
+        // Try to get channel_id from voice connection DB to pass to TrackEndNotifier
+        let channel_id = {
+            let mut db_conn = establish_connection();
+            VoiceConnection::find_by_guild_id(&mut db_conn, guild_id_str)
+                .ok()
+                .flatten()
+                .and_then(|vc| vc.channel_id)
+                .and_then(|cid_str| cid_str.parse::<u64>().ok())
+                .map(|id| ChannelId::new(id))
+        };
+
+        if let Some(cid) = channel_id {
+            if let Err(e) = track_handle.add_event(
+                songbird::Event::Track(songbird::TrackEvent::End),
+                crate::commands::play::TrackEndNotifier {
+                    guild_id,
+                    channel_id: cid,
+                    manager: manager.clone(),
+                    http: ctx.http.clone(),
+                },
+            ) {
+                error!("Failed to add track event handler: {}", e);
+            }
+        }
+
+        // Send a Now Playing message to the channel
+        if let Some(cid) = channel_id {
+            let embed = serenity::all::CreateEmbed::new()
+                .title("🎵 Now Playing")
+                .description(next_track.title.as_deref().unwrap_or(&next_track.url))
+                .url(&next_track.url)
+                .colour(0x1db954);
+
+            let _ = cid
+                .send_message(&ctx.http, serenity::all::CreateMessage::new().embeds(vec![embed]))
+                .await;
+        }
+
+        // Update DB voice connection
+        let mut db_conn = establish_connection();
+        let _ = VoiceConnection::update_playing_status(
+            &mut db_conn,
+            guild_id_str,
+            true,
+            next_track.title.as_deref(),
+        );
+    }
+}
+

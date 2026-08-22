@@ -6,7 +6,7 @@ use crate::database::schema::queue_history;
 
 #[derive(Queryable, Selectable, Serialize, Deserialize, Debug)]
 #[diesel(table_name = queue_history)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct QueueHistory {
     pub id: Option<i32>,
     pub guild_id: String,
@@ -29,7 +29,7 @@ pub struct NewQueueHistory {
 
 impl QueueHistory {
     pub fn create(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         user_id: &str,
         url: &str,
@@ -50,7 +50,7 @@ impl QueueHistory {
     }
 
     pub fn get_recent_for_guild(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         guild_id: &str,
         limit: i64,
     ) -> QueryResult<Vec<QueueHistory>> {
@@ -62,7 +62,7 @@ impl QueueHistory {
     }
 
     pub fn get_recent_for_user(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         user_id: &str,
         limit: i64,
     ) -> QueryResult<Vec<QueueHistory>> {
@@ -74,7 +74,7 @@ impl QueueHistory {
     }
 
     pub fn cleanup_old_entries(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         days_to_keep: i32,
     ) -> QueryResult<usize> {
         let cutoff_date =

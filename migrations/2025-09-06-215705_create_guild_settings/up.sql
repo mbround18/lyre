@@ -3,8 +3,8 @@ CREATE TABLE guild_settings (
     default_volume REAL NOT NULL DEFAULT 0.5,
     auto_disconnect_minutes INTEGER NOT NULL DEFAULT 5,
     max_queue_size INTEGER NOT NULL DEFAULT 50,
-    allowed_roles TEXT, -- JSON array of role IDs
-    blocked_domains TEXT, -- JSON array of blocked domains
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    allowed_roles TEXT,
+    blocked_domains TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

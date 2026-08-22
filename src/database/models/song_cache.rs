@@ -6,7 +6,7 @@ use crate::database::schema::song_cache;
 
 #[derive(Queryable, Selectable, Serialize, Deserialize, Debug)]
 #[diesel(table_name = song_cache)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct SongCache {
     pub url: String,
     pub title: String,
@@ -31,7 +31,7 @@ pub struct NewSongCache {
 
 impl SongCache {
     pub fn create_or_update(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         url: &str,
         title: &str,
         duration: Option<i32>,
@@ -63,14 +63,14 @@ impl SongCache {
             .execute(conn)
     }
 
-    pub fn find_by_url(conn: &mut SqliteConnection, url: &str) -> QueryResult<Option<SongCache>> {
+    pub fn find_by_url(conn: &mut PgConnection, url: &str) -> QueryResult<Option<SongCache>> {
         song_cache::table
             .filter(song_cache::url.eq(url))
             .first::<SongCache>(conn)
             .optional()
     }
 
-    pub fn update_last_accessed(conn: &mut SqliteConnection, url: &str) -> QueryResult<usize> {
+    pub fn update_last_accessed(conn: &mut PgConnection, url: &str) -> QueryResult<usize> {
         diesel::update(song_cache::table)
             .filter(song_cache::url.eq(url))
             .set(song_cache::last_accessed.eq(chrono::Utc::now().naive_utc()))
@@ -78,7 +78,7 @@ impl SongCache {
     }
 
     pub fn cleanup_old_entries(
-        conn: &mut SqliteConnection,
+        conn: &mut PgConnection,
         days_to_keep: i32,
     ) -> QueryResult<usize> {
         let cutoff_date =
@@ -89,7 +89,7 @@ impl SongCache {
             .execute(conn)
     }
 
-    pub fn get_cache_size(conn: &mut SqliteConnection) -> QueryResult<i64> {
+    pub fn get_cache_size(conn: &mut PgConnection) -> QueryResult<i64> {
         use diesel::dsl::sum;
 
         song_cache::table

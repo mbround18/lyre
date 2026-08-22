@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.89
+ARG RUST_VERSION=1.95
 
 # Base image with Rust toolchain and build deps
 FROM rust:${RUST_VERSION} AS chef-base

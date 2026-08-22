@@ -107,81 +107,71 @@ async fn ensure_yt_dlp() -> Result<PathBuf> {
     Ok(local)
 }
 
-async fn ytdlp_extract_id(ytdlp: &PathBuf, url: &str) -> Result<String> {
-    let out = TokioCommand::new(ytdlp)
-        .arg("--print")
-        .arg("id")
-        .arg("--skip-download")
-        .arg("-q")
-        .arg(url)
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .context("running yt-dlp to extract id")?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(anyhow!(
-            "yt-dlp --print id failed with status: {}. Error: {}",
-            out.status,
-            stderr.trim()
-        ));
-    }
-    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if id.is_empty() {
-        return Err(anyhow!("empty id from yt-dlp"));
-    }
-    Ok(id)
+#[derive(Debug, Deserialize)]
+pub struct YtDlpMetadata {
+    pub id: String,
+    pub title: String,
+    pub duration: Option<f64>,
+    pub thumbnail: Option<String>,
 }
 
-pub async fn ytdlp_extract_title(url: &str) -> Result<String> {
+pub async fn get_or_fetch_metadata(url: &str) -> Result<YtDlpMetadata> {
+    use crate::database::{establish_connection, models::SongCache};
+    
+    // First, try to fetch from cache for instantaneous results
+    let mut db_conn = establish_connection();
+    if let Ok(Some(cached)) = SongCache::find_by_url(&mut db_conn, url) {
+        // If we have it in cache, we still need the ID to download it.
+        // But for play.rs, title and duration are often enough.
+        // We'll return it, but use the URL hash as a fallback ID if needed.
+        let _ = SongCache::update_last_accessed(&mut db_conn, url);
+        return Ok(YtDlpMetadata {
+            id: cached.url.clone(), // We fallback to the URL as ID for cached entries
+            title: cached.title,
+            duration: cached.duration.map(|d| d as f64),
+            thumbnail: cached.thumbnail_url,
+        });
+    }
+
+    // Fallback to yt-dlp
     let ytdlp = ensure_yt_dlp().await?;
     let out = TokioCommand::new(&ytdlp)
-        .arg("--print")
-        .arg("title")
+        .arg("--dump-json")
         .arg("--skip-download")
         .arg("-q")
         .arg(url)
         .stdin(Stdio::null())
         .output()
         .await
-        .context("running yt-dlp to extract title")?;
+        .context("running yt-dlp to extract metadata")?;
+
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(anyhow!(
-            "yt-dlp --print title failed with status: {}. Error: {}",
+            "yt-dlp --dump-json failed with status: {}. Error: {}",
             out.status,
             stderr.trim()
         ));
     }
-    let title = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if title.is_empty() {
-        return Err(anyhow!("empty title from yt-dlp"));
-    }
-    Ok(title)
-}
 
-async fn ytdlp_extract_duration(ytdlp: &PathBuf, url: &str) -> Result<Option<f64>> {
-    let out = TokioCommand::new(ytdlp)
-        .arg("--print")
-        .arg("duration")
-        .arg("--skip-download")
-        .arg("-q")
-        .arg(url)
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .context("running yt-dlp to extract duration")?;
+    let stdout_str = String::from_utf8_lossy(&out.stdout);
+    let first_line = stdout_str.lines().next().unwrap_or("{}");
+    
+    let metadata: YtDlpMetadata = serde_json::from_str(first_line)
+        .context("failed to parse yt-dlp json output")?;
 
-    if !out.status.success() {
-        return Ok(None); // Duration might not be available for all videos
-    }
+    // Cache the fetched metadata
+    let _ = SongCache::create_or_update(
+        &mut db_conn,
+        url,
+        &metadata.title,
+        metadata.duration.map(|d| d as i32),
+        metadata.thumbnail.as_deref(),
+        None,
+        None,
+    );
 
-    let duration_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if duration_str.is_empty() || duration_str == "NA" {
-        return Ok(None);
-    }
-
-    Ok(duration_str.parse::<f64>().ok())
+    Ok(metadata)
 }
 
 fn get_ffmpeg_threads() -> String {
@@ -242,29 +232,45 @@ pub fn spawn_download_mp3(
         let base = download_base_dir()?;
         fs::create_dir_all(&base).await?;
 
+        let metadata = get_or_fetch_metadata(&url).await.ok();
+        
         // Check duration before downloading - reject if > 1h10m (4200 seconds)
         const MAX_DURATION_SECS: f64 = 4200.0; // 70 minutes
-        if let Ok(Some(duration)) = ytdlp_extract_duration(&ytdlp, &url).await {
-            if duration > MAX_DURATION_SECS {
-                let duration_mins = (duration / 60.0).round() as u32;
-                return Err(anyhow!(
-                    "Video is too long ({} minutes). Maximum allowed duration is 70 minutes (1h10m).",
-                    duration_mins
-                ));
+        if let Some(ref m) = metadata {
+            if let Some(duration) = m.duration {
+                if duration > MAX_DURATION_SECS {
+                    let duration_mins = (duration / 60.0).round() as u32;
+                    return Err(anyhow!(
+                        "Video is too long ({} minutes). Maximum allowed duration is 70 minutes (1h10m).",
+                        duration_mins
+                    ));
+                }
+                tracing::info!(
+                    "Video duration: {:.1} seconds ({:.1} minutes)",
+                    duration,
+                    duration / 60.0
+                );
             }
-            tracing::info!(
-                "Video duration: {:.1} seconds ({:.1} minutes)",
-                duration,
-                duration / 60.0
-            );
-        } else {
-            tracing::warn!("Could not determine video duration, proceeding anyway");
         }
 
         // Resolve a stable video ID for caching; fall back to a timestamp if it fails.
-        let vid = match ytdlp_extract_id(&ytdlp, &url).await {
-            Ok(v) => v,
-            Err(_) => format!(
+        let vid = match metadata {
+            Some(m) => {
+                // If ID is a URL (from cache), hash it to be safe for filenames
+                if m.id.starts_with("http") {
+                    let hash = {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        m.id.hash(&mut hasher);
+                        hasher.finish()
+                    };
+                    format!("{:x}", hash)
+                } else {
+                    m.id
+                }
+            },
+            None => format!(
                 "ts-{}",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -377,11 +383,11 @@ pub fn spawn_download_mp3(
             let mut last_sent = 255u8;
             let mut error_lines = Vec::new();
             let mut downloading_started = false;
-            
+
             while let Some(Ok(line)) = reader.next_line().await.transpose() {
                 // Log all yt-dlp output for debugging
                 tracing::debug!("yt-dlp: {}", line);
-                
+
                 if let Some(pct) = parse_percent(&line) {
                     if !downloading_started {
                         tracing::info!("Download started");

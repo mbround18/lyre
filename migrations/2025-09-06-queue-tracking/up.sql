@@ -1,13 +1,13 @@
 -- Create current_queue table to track active queue items
 CREATE TABLE current_queue (
-    id INTEGER PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     guild_id TEXT NOT NULL,
     url TEXT NOT NULL,
     title TEXT,
     duration INTEGER, -- in seconds
     position INTEGER NOT NULL, -- 0 = currently playing, 1+ = in queue
     added_by TEXT NOT NULL, -- user ID
-    added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    added_at TIMESTAMP NOT NULL DEFAULT NOW(),
     UNIQUE(guild_id, position)
 );
 
