@@ -50,7 +50,7 @@ FROM debian:trixie-slim AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tzdata tini ffmpeg yt-dlp libopus0 aria2 \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata tini ffmpeg yt-dlp libopus0 aria2 curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user
@@ -80,9 +80,11 @@ COPY --from=frontend-builder /app/static/app ./static/app
 
 # Sensible defaults
 ENV RUST_LOG=info
-ENV DATABASE_URL=/data/lyre.db
+# DATABASE_URL (postgres://...) must be provided at runtime - no default, since a
+# stale/wrong value fails silently instead of loudly at startup.
 
-# No ports exposed (Discord bot is outbound only)
-# Web server listens on 3000
+# Web server listens on 3000 (dashboard + REST API); Discord connection is outbound only
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -f http://127.0.0.1:3000/k8s/livez || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/lyre"]

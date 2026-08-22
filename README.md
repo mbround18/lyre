@@ -1,21 +1,47 @@
 # Lyre Discord Bot
 
-A minimal Discord music bot using Serenity + Songbird with yt-dlp. It provides slash commands to play audio from links, with caching and a small set of tunables to reduce hiccups.
+A Discord music bot using Serenity + Songbird with yt-dlp, backed by Postgres for queue/settings persistence and a web dashboard (Discord OAuth2) for control outside of Discord itself.
 
 ## Prerequisites
 
-- Rust toolchain (stable)
-- A Discord Bot token with the bot invited into your server
+- Rust toolchain (pinned in `rust-toolchain.toml`) or Docker
+- A Postgres database (the bundled `compose.yaml` provides one)
+- A Discord Bot token with the bot invited into your server, plus a Discord OAuth2 client (client ID/secret) for the dashboard
 - On first run, the bot downloads the latest platform-specific `yt-dlp` from GitHub releases automatically
 
-## Setup
+## Deployment (Docker Compose)
 
-1. Create a bot in the Discord Developer Portal and copy the token.
-2. Create a `.env` file:
+The fastest path to a running deployment:
+
+```bash
+cp .env.example .env
+# edit .env: set DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI
+
+docker compose up -d --build
+```
+
+This starts `db` (Postgres) and `lyre` (bot + HTTP API + dashboard) on the shared `lyre-net` network. The bot binary embeds and runs its database migrations automatically at startup — no separate migration step needed. The HTTP server (dashboard + REST API) listens on `:3000` by default (`LYRE_HTTP_BIND`); data (audio cache, downloads) persists in the `lyre-data` Docker volume.
+
+To build and publish an image yourself, the `Dockerfile` is a multi-stage build (frontend → cargo-chef dependency cache → release binary → slim Debian runtime) that produces a small, non-root runtime image.
+
+## Local development
+
+`make dev` starts the local Postgres container and runs the bot with `cargo run`; see the `Makefile` for the full list of targets (`install`, `db-up`, `db-down`, etc). The React dashboard (`frontend/`) is a separate Vite dev server proxied to the backend — `make install-frontend` followed by `cd frontend && pnpm dev`.
+
+1. Create a bot in the Discord Developer Portal and copy the token. Create an OAuth2 client (or reuse the bot's application) for `DISCORD_CLIENT_ID`/`DISCORD_CLIENT_SECRET`.
+2. Copy `.env.example` to `.env` and fill in the required values:
 
 ```dotenv
-# Required
+# Required — bot auth
 DISCORD_TOKEN=your-bot-token-here
+
+# Required — dashboard OAuth2
+DISCORD_CLIENT_ID=your_discord_client_id_here
+DISCORD_CLIENT_SECRET=your_discord_client_secret_here
+DISCORD_REDIRECT_URI=http://localhost:3000/auth/callback
+
+# Required — Postgres connection (compose.yaml wires this to the db service automatically)
+DATABASE_URL=postgres://postgres:postgres@localhost:5433/lyre
 
 # Optional (tuning / behavior)
 # Base folder for downloaded/cached MP3s. Relative paths resolve from the current working directory.
@@ -25,17 +51,16 @@ DISCORD_TOKEN=your-bot-token-here
 # Mixing mode: mono reduces bandwidth/CPU, can help with stutter. Default: stereo
 # LYRE_MIX_MODE=mono
 
-# Encoder bitrate in bits/sec (16000..192000). Defaults to 96000
-# LYRE_BITRATE=64000
-
-# Start tracks muted for N milliseconds, then raise to 0.5 volume (masks initial jitters)
-# LYRE_PREROLL_MS=100
-
 # Optional: Path to cookies.txt for authenticated downloads (your own content, private videos)
 # COOKIES_FILE=/path/to/cookies.txt
 
 # Optional: Override auto-detected ffmpeg thread count (auto-detects 75% of CPU cores, 2-8 range)
 # FFMPEG_THREADS=4
+
+# HTTP bind address for the dashboard/API
+LYRE_HTTP_BIND=127.0.0.1:3000
+
+RUST_LOG=info
 ```
 
 3. Build and run:

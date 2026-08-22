@@ -15,6 +15,11 @@ services:
       - lyre-db-data:/var/lib/postgresql
     networks:
       - lyre-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   lyre:
     image: mbround18/lyre:${VERSION:-latest}
@@ -36,7 +41,14 @@ services:
     networks:
       - lyre-net
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/k8s/livez"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
 networks:
   lyre-net:

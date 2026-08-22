@@ -31,7 +31,7 @@ pub async fn run_http(bind: Option<String>) -> std::io::Result<()> {
                 fs::Files::new("/static/app", "./static/app")
                     .index_file("index.html")
                     .default_handler(web::to(|| async {
-                        fs::NamedFile::open_async("./static/app/index.html").await
+                        fs::NamedFile::open("./static/app/index.html")
                     })),
             )
             // Legacy API-tester dashboard and any other static assets
