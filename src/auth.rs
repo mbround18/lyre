@@ -44,8 +44,8 @@ impl FromRequest for AuthenticatedUser {
             && let Ok(auth_str) = auth_value.to_str()
             && let Some(token) = auth_str.strip_prefix("Bearer ")
         {
-            // For demo purposes, accept any token that starts with "demo_"
-            if token.starts_with("demo_") {
+            // For demo purposes, accept any token that starts with "demo_" — dev builds only
+            if cfg!(debug_assertions) && token.starts_with("demo_") {
                 let user = DiscordUser {
                     id: "123456789".to_string(),
                     username: "demouser".to_string(),
@@ -62,7 +62,7 @@ impl FromRequest for AuthenticatedUser {
                     permissions: "8".to_string(), // Administrator
                 }];
 
-                return ready(Ok(AuthenticatedUser { user, guilds }));
+                return ready(Ok(Self { user, guilds }));
             }
 
             // Store the token in the request extensions so endpoints can validate it
@@ -80,7 +80,7 @@ impl FromRequest for AuthenticatedUser {
 
             let guilds = vec![];
 
-            return ready(Ok(AuthenticatedUser { user, guilds }));
+            return ready(Ok(Self { user, guilds }));
         }
 
         ready(Err(ErrorUnauthorized(
@@ -102,12 +102,12 @@ pub async fn validate_discord_token(access_token: &str) -> Result<DiscordUser> {
     let client = reqwest::Client::new();
 
     let response = client
-        .get(format!("{}/users/@me", DISCORD_API_BASE))
-        .header("Authorization", format!("Bearer {}", access_token))
+        .get(format!("{DISCORD_API_BASE}/users/@me"))
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("User-Agent", "lyre-bot/0.1")
         .send()
         .await
-        .map_err(|e| anyhow!("Failed to call Discord API: {}", e))?;
+        .map_err(|e| anyhow!("Failed to call Discord API: {e}"))?;
 
     if !response.status().is_success() {
         return Err(anyhow!("Discord API returned error: {}", response.status()));
@@ -116,7 +116,7 @@ pub async fn validate_discord_token(access_token: &str) -> Result<DiscordUser> {
     let user: DiscordUser = response
         .json()
         .await
-        .map_err(|e| anyhow!("Failed to parse Discord user response: {}", e))?;
+        .map_err(|e| anyhow!("Failed to parse Discord user response: {e}"))?;
 
     Ok(user)
 }
@@ -126,12 +126,12 @@ pub async fn get_user_guilds(access_token: &str) -> Result<Vec<UserGuild>> {
     let client = reqwest::Client::new();
 
     let response = client
-        .get(format!("{}/users/@me/guilds", DISCORD_API_BASE))
-        .header("Authorization", format!("Bearer {}", access_token))
+        .get(format!("{DISCORD_API_BASE}/users/@me/guilds"))
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("User-Agent", "lyre-bot/0.1")
         .send()
         .await
-        .map_err(|e| anyhow!("Failed to call Discord API: {}", e))?;
+        .map_err(|e| anyhow!("Failed to call Discord API: {e}"))?;
 
     if !response.status().is_success() {
         return Err(anyhow!("Discord API returned error: {}", response.status()));
@@ -140,7 +140,7 @@ pub async fn get_user_guilds(access_token: &str) -> Result<Vec<UserGuild>> {
     let guilds: Vec<UserGuild> = response
         .json()
         .await
-        .map_err(|e| anyhow!("Failed to parse Discord guilds response: {}", e))?;
+        .map_err(|e| anyhow!("Failed to parse Discord guilds response: {e}"))?;
 
     Ok(guilds)
 }
@@ -152,16 +152,14 @@ pub fn user_can_control_guild(user_guilds: &[UserGuild], guild_id: &str) -> bool
             && (
                 guild.owner || has_permission(&guild.permissions, 0x8) || // Administrator
             has_permission(&guild.permissions, 0x20) || // Manage Guild
-            has_permission(&guild.permissions, 0x100000)
+            has_permission(&guild.permissions, 0x0010_0000)
                 // Use Voice Activity
             )
     })
 }
 
 fn has_permission(permissions_str: &str, permission_bit: u64) -> bool {
-    if let Ok(permissions) = permissions_str.parse::<u64>() {
-        (permissions & permission_bit) != 0
-    } else {
-        false
-    }
+    permissions_str
+        .parse::<u64>()
+        .is_ok_and(|permissions| (permissions & permission_bit) != 0)
 }

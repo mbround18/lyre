@@ -14,7 +14,7 @@ pub async fn next_track(
 
     // Get authenticated user from middleware
     let user = get_authenticated_user_from_extensions(&req)
-        .map_err(|e| ErrorUnauthorized(format!("Authentication required: {}", e)))?;
+        .map_err(|e| ErrorUnauthorized(format!("Authentication required: {e}")))?;
 
     if !user_can_control_guild(&user.guilds, &guild_id) {
         return Err(ErrorUnauthorized("No permission for this guild"));
@@ -30,12 +30,10 @@ pub async fn stop_playback(path: web::Path<String>, req: HttpRequest) -> ActixRe
     let guild_id = path.into_inner();
 
     // Get authenticated user from middleware
-    let user = match get_authenticated_user_from_extensions(&req) {
-        Ok(user) => user,
-        Err(_) => {
-            return Ok(HttpResponse::Unauthorized()
-                .json(ApiResponse::<()>::error("Authentication failed")));
-        }
+    let Ok(user) = get_authenticated_user_from_extensions(&req) else {
+        return Ok(
+            HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Authentication failed"))
+        );
     };
 
     if !user_can_control_guild(&user.guilds, &guild_id) {
@@ -57,12 +55,10 @@ pub async fn set_volume(
     let guild_id = path.into_inner();
 
     // Get authenticated user from middleware
-    let user = match get_authenticated_user_from_extensions(&req) {
-        Ok(user) => user,
-        Err(_) => {
-            return Ok(HttpResponse::Unauthorized()
-                .json(ApiResponse::<()>::error("Authentication failed")));
-        }
+    let Ok(user) = get_authenticated_user_from_extensions(&req) else {
+        return Ok(
+            HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Authentication failed"))
+        );
     };
 
     if !user_can_control_guild(&user.guilds, &guild_id) {
@@ -98,12 +94,10 @@ pub async fn join_voice_channel(
     let guild_id = path.into_inner();
 
     // Get authenticated user from middleware
-    let user = match get_authenticated_user_from_extensions(&req) {
-        Ok(user) => user,
-        Err(_) => {
-            return Ok(HttpResponse::Unauthorized()
-                .json(ApiResponse::<()>::error("Authentication failed")));
-        }
+    let Ok(user) = get_authenticated_user_from_extensions(&req) else {
+        return Ok(
+            HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Authentication failed"))
+        );
     };
 
     if !user_can_control_guild(&user.guilds, &guild_id) {

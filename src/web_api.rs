@@ -1,15 +1,15 @@
 use actix_files as fs;
-use actix_web::{App, HttpServer, middleware::Logger};
+use actix_web::{App, HttpServer, middleware::Logger, web};
 use std::net::Ipv4Addr;
 
 use crate::middleware::AuthMiddleware;
 
 use crate::api::{
     add_to_queue, cleanup_old_data, clear_queue, dashboard_redirect, get_cache_stats,
-    get_guild_settings, get_guilds, get_maintenance_stats, get_queue, get_recent_tracks,
-    get_song_info, get_test_token, get_user_history, health_metrics, join_voice_channel, livez,
-    next_track, oauth_callback, readyz, search_songs, set_volume, skip_track, stop_playback,
-    update_guild_settings, validate_auth,
+    get_guild_settings, get_guilds, get_maintenance_stats, get_oauth_config, get_queue,
+    get_recent_tracks, get_song_info, get_test_token, get_user_history, health_metrics,
+    join_voice_channel, livez, next_track, oauth_callback, readyz, search_songs, set_volume,
+    skip_track, stop_playback, update_guild_settings, validate_auth,
 };
 
 pub async fn run_http(bind: Option<String>) -> std::io::Result<()> {
@@ -25,11 +25,21 @@ pub async fn run_http(bind: Option<String>) -> std::io::Result<()> {
             .service(livez)
             .service(readyz)
             .service(health_metrics)
-            // Dashboard - serve static files
+            // React dashboard (built from frontend/) - falls back to index.html so
+            // client-side routes like /static/app/guild/123 work on a hard refresh.
+            .service(
+                fs::Files::new("/static/app", "./static/app")
+                    .index_file("index.html")
+                    .default_handler(web::to(|| async {
+                        fs::NamedFile::open_async("./static/app/index.html").await
+                    })),
+            )
+            // Legacy API-tester dashboard and any other static assets
             .service(fs::Files::new("/static", "./static").show_files_listing())
             .service(dashboard_redirect)
             // OAuth endpoints
             .service(oauth_callback)
+            .service(get_oauth_config)
             // Development endpoints (debug builds only)
             .service(get_test_token)
             // API endpoints

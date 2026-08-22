@@ -30,10 +30,7 @@ pub struct NewGuildSettings {
 }
 
 impl GuildSettings {
-    pub fn create_or_update(
-        conn: &mut PgConnection,
-        guild_id: &str,
-    ) -> QueryResult<GuildSettings> {
+    pub fn create_or_update(conn: &mut PgConnection, guild_id: &str) -> QueryResult<Self> {
         let new_settings = NewGuildSettings {
             guild_id: guild_id.to_string(),
             default_volume: None,
@@ -53,13 +50,10 @@ impl GuildSettings {
         Self::find_by_guild_id(conn, guild_id)?.ok_or_else(|| diesel::result::Error::NotFound)
     }
 
-    pub fn find_by_guild_id(
-        conn: &mut PgConnection,
-        guild_id: &str,
-    ) -> QueryResult<Option<GuildSettings>> {
+    pub fn find_by_guild_id(conn: &mut PgConnection, guild_id: &str) -> QueryResult<Option<Self>> {
         guild_settings::table
             .filter(guild_settings::guild_id.eq(guild_id))
-            .first::<GuildSettings>(conn)
+            .first::<Self>(conn)
             .optional()
     }
 

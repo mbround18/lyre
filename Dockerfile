@@ -1,4 +1,15 @@
 ARG RUST_VERSION=1.95
+ARG NODE_VERSION=22
+
+# Build the React dashboard (frontend/ -> static/app)
+FROM node:${NODE_VERSION}-slim AS frontend-builder
+RUN corepack enable
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm build
 
 # Base image with Rust toolchain and build deps
 FROM rust:${RUST_VERSION} AS chef-base
@@ -65,6 +76,7 @@ VOLUME ["/data"]
 COPY --from=builder /app/target/release/lyre /usr/local/bin/lyre
 
 COPY ./static ./static
+COPY --from=frontend-builder /app/static/app ./static/app
 
 # Sensible defaults
 ENV RUST_LOG=info

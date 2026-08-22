@@ -18,10 +18,9 @@ pub async fn get_song_info(
     query: web::Query<std::collections::HashMap<String, String>>,
     _user: AuthenticatedUser,
 ) -> ActixResult<HttpResponse> {
-    if let Some(url) = query.get("url") {
-        // TODO: Use yt-dlp to get song metadata
-        Ok(HttpResponse::Ok().json(ApiResponse::success(format!("Song info for: {}", url))))
-    } else {
-        Ok(HttpResponse::BadRequest().json(ApiResponse::<()>::error("Missing url parameter")))
-    }
+    // TODO: Use yt-dlp to get song metadata
+    query.get("url").map_or_else(
+        || Ok(HttpResponse::BadRequest().json(ApiResponse::<()>::error("Missing url parameter"))),
+        |url| Ok(HttpResponse::Ok().json(ApiResponse::success(format!("Song info for: {url}")))),
+    )
 }

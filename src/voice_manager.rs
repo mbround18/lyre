@@ -23,7 +23,7 @@ pub async fn join_voice_channel(
     }
 
     // Retry voice channel joining with exponential backoff
-    let mut attempts = 0;
+    let mut attempts: u32 = 0;
     let max_attempts = 5;
 
     loop {
@@ -58,13 +58,11 @@ pub async fn join_voice_channel(
                 attempts += 1;
                 if attempts >= max_attempts {
                     return Err(anyhow!(
-                        "failed to join voice channel after {} attempts: {}. This may be due to network issues, Discord API problems, or insufficient bot permissions.",
-                        max_attempts,
-                        e
+                        "failed to join voice channel after {max_attempts} attempts: {e}. This may be due to network issues, Discord API problems, or insufficient bot permissions."
                     ));
                 }
 
-                let delay_ms = std::cmp::min(5000, 1000 * (2_u64.pow(attempts as u32 - 1))); // Exponential backoff with cap at 5s
+                let delay_ms = std::cmp::min(5000, 1000 * (2_u64.pow(attempts - 1))); // Exponential backoff with cap at 5s
                 warn!(
                     "Voice channel join attempt {} failed: {}. Retrying in {}ms...",
                     attempts, e, delay_ms
@@ -121,11 +119,7 @@ pub async fn process_voice_requests(ctx: Arc<SerenityContext>) {
                     let current_channel = call.current_channel();
                     drop(call);
 
-                    if let Some(current) = current_channel {
-                        current.0.get() == channel_id.get()
-                    } else {
-                        false
-                    }
+                    current_channel.is_some_and(|current| current.0.get() == channel_id.get())
                 } else {
                     false
                 };
@@ -171,7 +165,7 @@ pub async fn process_voice_requests(ctx: Arc<SerenityContext>) {
     }
 }
 
-/// Process a queue update notification from PostgreSQL
+/// Process a queue update notification from `PostgreSQL`
 pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
     let guild_id = match guild_id_str.parse::<u64>() {
         Ok(id) => GuildId::new(id),
@@ -179,7 +173,7 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
     };
 
     let manager = songbird::get(ctx).await.unwrap().clone();
-    
+
     // Ensure we are connected to the voice channel
     if manager.get(guild_id).is_none() {
         // If not connected, maybe we shouldn't start playback, or we should connect if channel is known.
@@ -216,12 +210,12 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
 
     // We have a track to play. Start downloading and playing it.
     info!("Starting background playback for: {}", next_track.url);
-    
+
     // 1. Download
     let (mut rx, download_handle) = crate::audio::spawn_download_mp3(next_track.url.clone());
-    
+
     // We can optionally process the progress stream here, but since this is background we can just drain it
-    while let Some(_) = rx.recv().await {}
+    while rx.recv().await.is_some() {}
 
     let input_path = match download_handle.await {
         Ok(Ok(path)) => path,
@@ -229,13 +223,15 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
             error!("Download task panicked: {}", e);
             // Advance queue since this track failed
             let mut db_conn = establish_connection();
-            let _ = crate::database::models::CurrentQueue::advance_queue(&mut db_conn, guild_id_str);
+            let _ =
+                crate::database::models::CurrentQueue::advance_queue(&mut db_conn, guild_id_str);
             return;
         }
         Ok(Err(e)) => {
             error!("Failed to download track: {}", e);
             let mut db_conn = establish_connection();
-            let _ = crate::database::models::CurrentQueue::advance_queue(&mut db_conn, guild_id_str);
+            let _ =
+                crate::database::models::CurrentQueue::advance_queue(&mut db_conn, guild_id_str);
             return;
         }
     };
@@ -245,6 +241,7 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
     if let Some(call_lock) = manager.get(guild_id) {
         let mut call = call_lock.lock().await;
         let track_handle = call.enqueue_input(source.into()).await;
+        drop(call);
 
         // Try to get channel_id from voice connection DB to pass to TrackEndNotifier
         let channel_id = {
@@ -257,8 +254,8 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
                 .map(|id| ChannelId::new(id))
         };
 
-        if let Some(cid) = channel_id {
-            if let Err(e) = track_handle.add_event(
+        if let Some(cid) = channel_id
+            && let Err(e) = track_handle.add_event(
                 songbird::Event::Track(songbird::TrackEvent::End),
                 crate::commands::play::TrackEndNotifier {
                     guild_id,
@@ -266,9 +263,9 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
                     manager: manager.clone(),
                     http: ctx.http.clone(),
                 },
-            ) {
-                error!("Failed to add track event handler: {}", e);
-            }
+            )
+        {
+            error!("Failed to add track event handler: {}", e);
         }
 
         // Send a Now Playing message to the channel
@@ -277,10 +274,13 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
                 .title("🎵 Now Playing")
                 .description(next_track.title.as_deref().unwrap_or(&next_track.url))
                 .url(&next_track.url)
-                .colour(0x1db954);
+                .colour(0x001d_b954);
 
             let _ = cid
-                .send_message(&ctx.http, serenity::all::CreateMessage::new().embeds(vec![embed]))
+                .send_message(
+                    &ctx.http,
+                    serenity::all::CreateMessage::new().embeds(vec![embed]),
+                )
                 .await;
         }
 
@@ -294,4 +294,3 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
         );
     }
 }
-

@@ -1,7 +1,6 @@
 use std::{path::PathBuf, process::Stdio};
 
 use anyhow::{Context as AnyhowContext, Result, anyhow};
-use once_cell::sync::Lazy;
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
 use tokio::{
@@ -12,7 +11,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-static HTTP: Lazy<reqwest::Client> = Lazy::new(|| {
+static HTTP: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
         .user_agent("lyre-bot/0.1 (+https://github.com/)")
         .build()
@@ -39,7 +38,7 @@ fn cache_dir() -> Result<PathBuf> {
     Ok(base.join("lyre").join("yt-dlp"))
 }
 
-fn platform_asset_name() -> &'static str {
+const fn platform_asset_name() -> &'static str {
     if cfg!(target_os = "windows") {
         if cfg!(target_arch = "x86_64") {
             "yt-dlp.exe"
@@ -85,7 +84,7 @@ async fn ensure_yt_dlp() -> Result<PathBuf> {
         .assets
         .into_iter()
         .find(|a| a.name == wanted)
-        .ok_or_else(|| anyhow!("no suitable yt-dlp asset for this platform: {}", wanted))?;
+        .ok_or_else(|| anyhow!("no suitable yt-dlp asset for this platform: {wanted}"))?;
 
     let bytes = HTTP
         .get(asset.browser_download_url)
@@ -117,7 +116,7 @@ pub struct YtDlpMetadata {
 
 pub async fn get_or_fetch_metadata(url: &str) -> Result<YtDlpMetadata> {
     use crate::database::{establish_connection, models::SongCache};
-    
+
     // First, try to fetch from cache for instantaneous results
     let mut db_conn = establish_connection();
     if let Ok(Some(cached)) = SongCache::find_by_url(&mut db_conn, url) {
@@ -128,7 +127,7 @@ pub async fn get_or_fetch_metadata(url: &str) -> Result<YtDlpMetadata> {
         return Ok(YtDlpMetadata {
             id: cached.url.clone(), // We fallback to the URL as ID for cached entries
             title: cached.title,
-            duration: cached.duration.map(|d| d as f64),
+            duration: cached.duration.map(f64::from),
             thumbnail: cached.thumbnail_url,
         });
     }
@@ -156,9 +155,9 @@ pub async fn get_or_fetch_metadata(url: &str) -> Result<YtDlpMetadata> {
 
     let stdout_str = String::from_utf8_lossy(&out.stdout);
     let first_line = stdout_str.lines().next().unwrap_or("{}");
-    
-    let metadata: YtDlpMetadata = serde_json::from_str(first_line)
-        .context("failed to parse yt-dlp json output")?;
+
+    let metadata: YtDlpMetadata =
+        serde_json::from_str(first_line).context("failed to parse yt-dlp json output")?;
 
     // Cache the fetched metadata
     let _ = SongCache::create_or_update(
@@ -207,7 +206,10 @@ pub fn resolved_download_base_dir() -> Result<PathBuf> {
 
 // removed blocking download_mp3 in favor of spawn_download_mp3 used by /play
 
+// Callers currently drop the receiver (`let (_rx, _handle) = spawn_download_mp3(...)`),
+// so these fields aren't read yet — kept for the planned download-progress UI.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DownloadProgress {
     /// One of: queued, downloading, converting, done, failed
     pub status: String,
@@ -215,12 +217,20 @@ pub struct DownloadProgress {
     pub percent: Option<u8>,
 }
 
+// One linear download/transcode pipeline (fetch metadata, download, convert, report
+// progress); splitting it into sub-functions would mean threading `tx` and intermediate
+// state through several new signatures for no behavior change, trading a long function
+// for a scattered one.
+#[allow(clippy::too_many_lines)]
 pub fn spawn_download_mp3(
     url: String,
 ) -> (
     mpsc::UnboundedReceiver<DownloadProgress>,
     JoinHandle<Result<PathBuf>>,
 ) {
+    // Check duration before downloading - reject if > 1h10m (4200 seconds)
+    const MAX_DURATION_SECS: f64 = 4200.0; // 70 minutes
+
     let (tx, rx) = mpsc::unbounded_channel();
     let handle = tokio::spawn(async move {
         // initial queued status
@@ -233,24 +243,21 @@ pub fn spawn_download_mp3(
         fs::create_dir_all(&base).await?;
 
         let metadata = get_or_fetch_metadata(&url).await.ok();
-        
-        // Check duration before downloading - reject if > 1h10m (4200 seconds)
-        const MAX_DURATION_SECS: f64 = 4200.0; // 70 minutes
-        if let Some(ref m) = metadata {
-            if let Some(duration) = m.duration {
-                if duration > MAX_DURATION_SECS {
-                    let duration_mins = (duration / 60.0).round() as u32;
-                    return Err(anyhow!(
-                        "Video is too long ({} minutes). Maximum allowed duration is 70 minutes (1h10m).",
-                        duration_mins
-                    ));
-                }
-                tracing::info!(
-                    "Video duration: {:.1} seconds ({:.1} minutes)",
-                    duration,
-                    duration / 60.0
-                );
+
+        if let Some(ref m) = metadata
+            && let Some(duration) = m.duration
+        {
+            if duration > MAX_DURATION_SECS {
+                let duration_mins = (duration / 60.0).round() as u32;
+                return Err(anyhow!(
+                    "Video is too long ({duration_mins} minutes). Maximum allowed duration is 70 minutes (1h10m)."
+                ));
             }
+            tracing::info!(
+                "Video duration: {:.1} seconds ({:.1} minutes)",
+                duration,
+                duration / 60.0
+            );
         }
 
         // Resolve a stable video ID for caching; fall back to a timestamp if it fails.
@@ -265,11 +272,11 @@ pub fn spawn_download_mp3(
                         m.id.hash(&mut hasher);
                         hasher.finish()
                     };
-                    format!("{:x}", hash)
+                    format!("{hash:x}")
                 } else {
                     m.id
                 }
-            },
+            }
             None => format!(
                 "ts-{}",
                 std::time::SystemTime::now()
@@ -278,7 +285,7 @@ pub fn spawn_download_mp3(
                     .as_nanos()
             ),
         };
-        let cached = base.join(format!("{}.mp3", vid));
+        let cached = base.join(format!("{vid}.mp3"));
         if fs::try_exists(&cached).await.unwrap_or(false) {
             let _ = tx.send(DownloadProgress {
                 status: "done".into(),
@@ -292,7 +299,7 @@ pub fn spawn_download_mp3(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_nanos();
-            format!("job-{}", now)
+            format!("job-{now}")
         };
         let dir = base.join(unique);
         fs::create_dir_all(&dir).await?;
@@ -309,11 +316,11 @@ pub fn spawn_download_mp3(
             .arg("--no-playlist");
 
         // Add cookies if COOKIES_FILE is set
-        if let Ok(cookies_path) = std::env::var("COOKIES_FILE") {
-            if std::path::Path::new(&cookies_path).exists() {
-                ytdlp_cmd.arg("--cookies").arg(cookies_path);
-                tracing::info!("Using cookies file for authentication");
-            }
+        if let Ok(cookies_path) = std::env::var("COOKIES_FILE")
+            && std::path::Path::new(&cookies_path).exists()
+        {
+            ytdlp_cmd.arg("--cookies").arg(cookies_path);
+            tracing::info!("Using cookies file for authentication");
         }
 
         ytdlp_cmd
@@ -442,10 +449,10 @@ pub fn spawn_download_mp3(
             let ff_err = ffmpeg_child.stderr.take();
             if let Some(fe) = ff_err {
                 // Drain ffmpeg stderr but do not block on parsing for now
-                let mut _buf = BufReader::new(fe).lines();
+                let mut lines = BufReader::new(fe).lines();
                 // spawn a task to drain
                 tokio::spawn(async move {
-                    while let Some(Ok(_)) = _buf.next_line().await.transpose() {
+                    while let Some(Ok(_)) = lines.next_line().await.transpose() {
                         // ignore for now
                     }
                 });
@@ -475,7 +482,7 @@ pub fn spawn_download_mp3(
             if p.extension().and_then(|s| s.to_str()) == Some("mp3") {
                 let meta = e.metadata().await?;
                 let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                if newest.as_ref().map(|(_, t)| mtime > *t).unwrap_or(true) {
+                if newest.as_ref().is_none_or(|(_, t)| mtime > *t) {
                     newest = Some((p, mtime));
                 }
             }

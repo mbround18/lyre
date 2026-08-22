@@ -15,12 +15,11 @@ pub async fn validate_auth(req: web::Json<AuthRequest>) -> ActixResult<HttpRespo
             }
             Err(e) => Ok(
                 HttpResponse::BadRequest().json(ApiResponse::<()>::error(&format!(
-                    "Failed to get guilds: {}",
-                    e
+                    "Failed to get guilds: {e}"
                 ))),
             ),
         },
         Err(e) => Ok(HttpResponse::Unauthorized()
-            .json(ApiResponse::<()>::error(&format!("Invalid token: {}", e)))),
+            .json(ApiResponse::<()>::error(&format!("Invalid token: {e}")))),
     }
 }

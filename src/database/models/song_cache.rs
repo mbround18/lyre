@@ -43,8 +43,8 @@ impl SongCache {
             url: url.to_string(),
             title: title.to_string(),
             duration,
-            thumbnail_url: thumbnail_url.map(|s| s.to_string()),
-            file_path: file_path.map(|s| s.to_string()),
+            thumbnail_url: thumbnail_url.map(std::string::ToString::to_string),
+            file_path: file_path.map(std::string::ToString::to_string),
             file_size,
         };
 
@@ -63,10 +63,10 @@ impl SongCache {
             .execute(conn)
     }
 
-    pub fn find_by_url(conn: &mut PgConnection, url: &str) -> QueryResult<Option<SongCache>> {
+    pub fn find_by_url(conn: &mut PgConnection, url: &str) -> QueryResult<Option<Self>> {
         song_cache::table
             .filter(song_cache::url.eq(url))
-            .first::<SongCache>(conn)
+            .first::<Self>(conn)
             .optional()
     }
 
@@ -77,12 +77,9 @@ impl SongCache {
             .execute(conn)
     }
 
-    pub fn cleanup_old_entries(
-        conn: &mut PgConnection,
-        days_to_keep: i32,
-    ) -> QueryResult<usize> {
+    pub fn cleanup_old_entries(conn: &mut PgConnection, days_to_keep: i32) -> QueryResult<usize> {
         let cutoff_date =
-            chrono::Utc::now().naive_utc() - chrono::Duration::days(days_to_keep as i64);
+            chrono::Utc::now().naive_utc() - chrono::Duration::days(i64::from(days_to_keep));
 
         diesel::delete(song_cache::table)
             .filter(song_cache::last_accessed.lt(cutoff_date))

@@ -41,7 +41,7 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
     drop(call);
 
     let msg = match res {
-        Ok(_) => {
+        Ok(()) => {
             if queue_len_after == 0 {
                 // No more songs, disconnect
                 let _ = manager.remove(guild_id).await;
@@ -49,23 +49,7 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
                 let embed = CreateEmbed::new()
                     .title("⏭️ Queue Ended")
                     .description("Skipped to next song, but the queue is now empty. Disconnected from voice channel.")
-                    .colour(0xFF6B6B); // Red
-
-                cmd.edit_response(
-                    &ctx.http,
-                    serenity::all::EditInteractionResponse::new().embeds(vec![embed]),
-                )
-                .await
-                .ok();
-                return Ok(());
-            } else {
-                let embed = CreateEmbed::new()
-                    .title("⏭️ Skipped to Next")
-                    .description(format!(
-                        "Now playing the next song. {} song(s) remaining in queue.",
-                        queue_len_after
-                    ))
-                    .colour(0x00FF7F); // Spring green
+                    .colour(0x00FF_6B6B); // Red
 
                 cmd.edit_response(
                     &ctx.http,
@@ -75,6 +59,21 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
                 .ok();
                 return Ok(());
             }
+
+            let embed = CreateEmbed::new()
+                .title("⏭️ Skipped to Next")
+                .description(format!(
+                    "Now playing the next song. {queue_len_after} song(s) remaining in queue."
+                ))
+                .colour(0x0000_FF7F); // Spring green
+
+            cmd.edit_response(
+                &ctx.http,
+                serenity::all::EditInteractionResponse::new().embeds(vec![embed]),
+            )
+            .await
+            .ok();
+            return Ok(());
         }
         Err(e) => format!("Nothing to skip: {e}"),
     };

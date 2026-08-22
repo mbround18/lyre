@@ -10,12 +10,10 @@ use actix_web::{HttpRequest, HttpResponse, Result as ActixResult, delete, get, p
 pub async fn get_queue(path: web::Path<String>, req: HttpRequest) -> ActixResult<HttpResponse> {
     let guild_id = path.into_inner();
 
-    let user = match get_authenticated_user_from_extensions(&req) {
-        Ok(user) => user,
-        Err(_) => {
-            return Ok(HttpResponse::Unauthorized()
-                .json(ApiResponse::<()>::error("Authentication failed")));
-        }
+    let Ok(user) = get_authenticated_user_from_extensions(&req) else {
+        return Ok(
+            HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Authentication failed"))
+        );
     };
 
     if !user_can_control_guild(&user.guilds, &guild_id) {
@@ -50,10 +48,10 @@ pub async fn get_queue(path: web::Path<String>, req: HttpRequest) -> ActixResult
         })
         .collect();
 
-    let is_playing = voice_connection.map(|vc| vc.is_playing).unwrap_or(false);
+    let is_playing = voice_connection.is_some_and(|vc| vc.is_playing);
 
     let queue_info = QueueInfo {
-        guild_id: guild_id.clone(),
+        guild_id,
         current_track,
         queue,
         position: 0,
@@ -71,12 +69,10 @@ pub async fn add_to_queue(
 ) -> ActixResult<HttpResponse> {
     let guild_id = path.into_inner();
 
-    let user = match get_authenticated_user_from_extensions(&req) {
-        Ok(user) => user,
-        Err(_) => {
-            return Ok(HttpResponse::Unauthorized()
-                .json(ApiResponse::<()>::error("Authentication failed")));
-        }
+    let Ok(user) = get_authenticated_user_from_extensions(&req) else {
+        return Ok(
+            HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Authentication failed"))
+        );
     };
 
     if !user_can_control_guild(&user.guilds, &guild_id) {
@@ -102,12 +98,10 @@ pub async fn add_to_queue(
 pub async fn skip_track(path: web::Path<String>, req: HttpRequest) -> ActixResult<HttpResponse> {
     let guild_id = path.into_inner();
 
-    let user = match get_authenticated_user_from_extensions(&req) {
-        Ok(user) => user,
-        Err(_) => {
-            return Ok(HttpResponse::Unauthorized()
-                .json(ApiResponse::<()>::error("Authentication failed")));
-        }
+    let Ok(user) = get_authenticated_user_from_extensions(&req) else {
+        return Ok(
+            HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Authentication failed"))
+        );
     };
 
     if !user_can_control_guild(&user.guilds, &guild_id) {
@@ -124,12 +118,10 @@ pub async fn skip_track(path: web::Path<String>, req: HttpRequest) -> ActixResul
 pub async fn clear_queue(path: web::Path<String>, req: HttpRequest) -> ActixResult<HttpResponse> {
     let guild_id = path.into_inner();
 
-    let user = match get_authenticated_user_from_extensions(&req) {
-        Ok(user) => user,
-        Err(_) => {
-            return Ok(HttpResponse::Unauthorized()
-                .json(ApiResponse::<()>::error("Authentication failed")));
-        }
+    let Ok(user) = get_authenticated_user_from_extensions(&req) else {
+        return Ok(
+            HttpResponse::Unauthorized().json(ApiResponse::<()>::error("Authentication failed"))
+        );
     };
 
     if !user_can_control_guild(&user.guilds, &guild_id) {

@@ -12,8 +12,7 @@ pub async fn get_guilds(req: HttpRequest, _user: AuthenticatedUser) -> ActixResu
         Err(e) => {
             return Ok(
                 HttpResponse::Unauthorized().json(ApiResponse::<()>::error(&format!(
-                    "Authentication failed: {}",
-                    e
+                    "Authentication failed: {e}"
                 ))),
             );
         }

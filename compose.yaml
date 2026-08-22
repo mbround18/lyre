@@ -7,6 +7,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: lyre
+    # Exposed to the host so `cargo run` outside of Docker (e.g. `make dev`) can connect.
+    # Host port 5433 (not 5432) to avoid clashing with a Postgres from another project.
+    ports:
+      - "5433:5432"
     volumes:
       - lyre-db-data:/var/lib/postgresql
     networks:

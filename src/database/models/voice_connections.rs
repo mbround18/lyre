@@ -28,10 +28,10 @@ impl VoiceConnection {
         conn: &mut PgConnection,
         guild_id: &str,
         channel_id: Option<&str>,
-    ) -> QueryResult<VoiceConnection> {
+    ) -> QueryResult<Self> {
         let new_connection = NewVoiceConnection {
             guild_id: guild_id.to_string(),
-            channel_id: channel_id.map(|s| s.to_string()),
+            channel_id: channel_id.map(std::string::ToString::to_string),
         };
 
         diesel::insert_into(voice_connections::table)
@@ -46,7 +46,7 @@ impl VoiceConnection {
         conn: &mut PgConnection,
         guild_id: &str,
         channel_id: Option<&str>,
-    ) -> QueryResult<VoiceConnection> {
+    ) -> QueryResult<Self> {
         // First try to update if exists
         if let Some(_existing) = Self::find_by_guild_id(conn, guild_id)? {
             diesel::update(voice_connections::table)
@@ -65,14 +65,11 @@ impl VoiceConnection {
         }
     }
 
-    pub fn find_by_guild_id(
-        conn: &mut PgConnection,
-        guild_id: &str,
-    ) -> QueryResult<Option<VoiceConnection>> {
+    pub fn find_by_guild_id(conn: &mut PgConnection, guild_id: &str) -> QueryResult<Option<Self>> {
         voice_connections::table
             .filter(voice_connections::guild_id.eq(guild_id))
-            .select(VoiceConnection::as_select())
-            .first::<VoiceConnection>(conn)
+            .select(Self::as_select())
+            .first::<Self>(conn)
             .optional()
     }
 
@@ -89,29 +86,27 @@ impl VoiceConnection {
             .execute(conn)
     }
 
-    pub fn get_all_connected(conn: &mut PgConnection) -> QueryResult<Vec<VoiceConnection>> {
+    pub fn get_all_connected(conn: &mut PgConnection) -> QueryResult<Vec<Self>> {
         voice_connections::table
-            .select(VoiceConnection::as_select())
-            .load::<VoiceConnection>(conn)
+            .select(Self::as_select())
+            .load::<Self>(conn)
     }
 
     pub fn is_connected(conn: &mut PgConnection, guild_id: &str) -> bool {
-        Self::find_by_guild_id(conn, guild_id)
-            .map(|result| result.is_some())
-            .unwrap_or(false)
+        Self::find_by_guild_id(conn, guild_id).is_ok_and(|result| result.is_some())
     }
 
     pub fn clear_all_connections(conn: &mut PgConnection) -> QueryResult<usize> {
         diesel::delete(voice_connections::table).execute(conn)
     }
 
-    /// Get voice connections that have a channel_id set but may need to be joined
+    /// Get voice connections that have a `channel_id` set but may need to be joined
     /// This is used to process API requests for joining voice channels
-    pub fn get_pending_joins(conn: &mut PgConnection) -> QueryResult<Vec<VoiceConnection>> {
+    pub fn get_pending_joins(conn: &mut PgConnection) -> QueryResult<Vec<Self>> {
         voice_connections::table
             .filter(voice_connections::channel_id.is_not_null())
-            .select(VoiceConnection::as_select())
-            .load::<VoiceConnection>(conn)
+            .select(Self::as_select())
+            .load::<Self>(conn)
     }
 
     /// Delete a voice connection record

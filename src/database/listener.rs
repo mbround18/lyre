@@ -1,8 +1,8 @@
+use futures_util::{StreamExt, TryStreamExt, stream};
 use std::env;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_postgres::{AsyncMessage, NoTls};
-use futures_util::{stream, StreamExt, TryStreamExt};
 use tracing::{error, info};
 
 pub async fn start_listener(ctx: Arc<serenity::all::Context>) {
@@ -17,7 +17,7 @@ pub async fn start_listener(ctx: Arc<serenity::all::Context>) {
 
     // Wrap poll_message in a stream and spawn it to the background
     let stream = stream::poll_fn(move |cx| connection.poll_message(cx));
-    let mut connection_stream = stream.map_err(|e| panic!("Postgres connection error: {}", e));
+    let mut connection_stream = stream.map_err(|e| panic!("Postgres connection error: {e}"));
 
     tokio::spawn(async move {
         while let Some(msg_result) = connection_stream.next().await {
@@ -35,7 +35,10 @@ pub async fn start_listener(ctx: Arc<serenity::all::Context>) {
     });
 
     // Execute LISTEN command
-    client.batch_execute("LISTEN queue_updates;").await.expect("Failed to execute LISTEN command");
+    client
+        .batch_execute("LISTEN queue_updates;")
+        .await
+        .expect("Failed to execute LISTEN command");
     info!("Listening for queue updates via pg_notify...");
 
     // Process notifications

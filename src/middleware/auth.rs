@@ -58,29 +58,26 @@ where
             }
 
             // Extract token from Authorization header
-            match extract_token_from_request(&req) {
-                Some(token) => {
-                    // Validate token and get user data
-                    match validate_token_and_get_user(&token).await {
-                        Ok(user) => {
-                            // Store authenticated user in request extensions
-                            req.extensions_mut().insert(user);
-                            service.call(req).await
-                        }
-                        Err(e) => {
-                            tracing::warn!("Token validation failed: {}", e);
-                            Err(actix_web::error::ErrorUnauthorized(
-                                "Invalid or expired token",
-                            ))
-                        }
+            if let Some(token) = extract_token_from_request(&req) {
+                // Validate token and get user data
+                match validate_token_and_get_user(&token).await {
+                    Ok(user) => {
+                        // Store authenticated user in request extensions
+                        req.extensions_mut().insert(user);
+                        service.call(req).await
+                    }
+                    Err(e) => {
+                        tracing::warn!("Token validation failed: {}", e);
+                        Err(actix_web::error::ErrorUnauthorized(
+                            "Invalid or expired token",
+                        ))
                     }
                 }
-                None => {
-                    tracing::warn!("No authorization token found in request to {}", path);
-                    Err(actix_web::error::ErrorUnauthorized(
-                        "Missing authorization token",
-                    ))
-                }
+            } else {
+                tracing::warn!("No authorization token found in request to {}", path);
+                Err(actix_web::error::ErrorUnauthorized(
+                    "Missing authorization token",
+                ))
             }
         })
     }
@@ -95,6 +92,7 @@ fn should_skip_auth(path: &str) -> bool {
         || path.starts_with("/api/readyz")
         || path.starts_with("/api/dev/test-token")
         || path.starts_with("/api/auth/validate")
+        || path.starts_with("/api/oauth/config")
         || path == "/"
         || path == "/favicon.ico"
 }
@@ -105,7 +103,7 @@ fn extract_token_from_request(req: &ServiceRequest) -> Option<String> {
         .to_str()
         .ok()?
         .strip_prefix("Bearer ")
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
 }
 
 async fn validate_token_and_get_user(

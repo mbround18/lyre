@@ -1,5 +1,10 @@
 tmp/
 
+### Frontend ###
+frontend/node_modules/
+frontend/dist/
+static/app/
+
 # Created by https://www.toptal.com/developers/gitignore/api/dotenv,rust,database
 # Edit at https://www.toptal.com/developers/gitignore?templates=dotenv,rust,database
 

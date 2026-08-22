@@ -67,8 +67,8 @@ impl SharedState {
         timeout_ms: u64,
     ) -> Result<BotResponse, String> {
         let command_id = match &command {
-            BotCommand::JoinVoiceChannel { guild_id, .. } => format!("join_{}", guild_id),
-            BotCommand::LeaveVoiceChannel { guild_id } => format!("leave_{}", guild_id),
+            BotCommand::JoinVoiceChannel { guild_id, .. } => format!("join_{guild_id}"),
+            BotCommand::LeaveVoiceChannel { guild_id } => format!("leave_{guild_id}"),
         };
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -82,8 +82,7 @@ impl SharedState {
         // Send command
         if self.command_sender.send(command).is_err() {
             // Clean up on send failure
-            let mut pending = self.pending_responses.write().await;
-            pending.remove(&command_id);
+            self.pending_responses.write().await.remove(&command_id);
             return Err("Bot command channel closed".to_string());
         }
 
@@ -94,8 +93,7 @@ impl SharedState {
             Ok(Err(_)) => Err("Response channel closed".to_string()),
             Err(_) => {
                 // Clean up on timeout
-                let mut pending = self.pending_responses.write().await;
-                pending.remove(&command_id);
+                self.pending_responses.write().await.remove(&command_id);
                 Err("Command timeout".to_string())
             }
         }
@@ -105,9 +103,9 @@ impl SharedState {
     pub async fn send_response(&self, response: BotResponse) {
         let response_id = match &response {
             BotResponse::JoinSuccess { guild_id, .. } | BotResponse::JoinError { guild_id, .. } => {
-                format!("join_{}", guild_id)
+                format!("join_{guild_id}")
             }
-            BotResponse::LeaveSuccess { guild_id } => format!("leave_{}", guild_id),
+            BotResponse::LeaveSuccess { guild_id } => format!("leave_{guild_id}"),
         };
 
         let mut pending = self.pending_responses.write().await;

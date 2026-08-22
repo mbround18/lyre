@@ -40,7 +40,7 @@ impl QueueHistory {
             guild_id: guild_id.to_string(),
             user_id: user_id.to_string(),
             url: url.to_string(),
-            title: title.map(|s| s.to_string()),
+            title: title.map(std::string::ToString::to_string),
             duration,
         };
 
@@ -53,32 +53,29 @@ impl QueueHistory {
         conn: &mut PgConnection,
         guild_id: &str,
         limit: i64,
-    ) -> QueryResult<Vec<QueueHistory>> {
+    ) -> QueryResult<Vec<Self>> {
         queue_history::table
             .filter(queue_history::guild_id.eq(guild_id))
             .order(queue_history::played_at.desc())
             .limit(limit)
-            .load::<QueueHistory>(conn)
+            .load::<Self>(conn)
     }
 
     pub fn get_recent_for_user(
         conn: &mut PgConnection,
         user_id: &str,
         limit: i64,
-    ) -> QueryResult<Vec<QueueHistory>> {
+    ) -> QueryResult<Vec<Self>> {
         queue_history::table
             .filter(queue_history::user_id.eq(user_id))
             .order(queue_history::played_at.desc())
             .limit(limit)
-            .load::<QueueHistory>(conn)
+            .load::<Self>(conn)
     }
 
-    pub fn cleanup_old_entries(
-        conn: &mut PgConnection,
-        days_to_keep: i32,
-    ) -> QueryResult<usize> {
+    pub fn cleanup_old_entries(conn: &mut PgConnection, days_to_keep: i32) -> QueryResult<usize> {
         let cutoff_date =
-            chrono::Utc::now().naive_utc() - chrono::Duration::days(days_to_keep as i64);
+            chrono::Utc::now().naive_utc() - chrono::Duration::days(i64::from(days_to_keep));
 
         diesel::delete(queue_history::table)
             .filter(queue_history::played_at.lt(cutoff_date))

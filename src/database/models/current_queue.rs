@@ -30,26 +30,20 @@ pub struct NewCurrentQueue {
 }
 
 impl CurrentQueue {
-    pub fn get_guild_queue(
-        conn: &mut PgConnection,
-        guild_id: &str,
-    ) -> QueryResult<Vec<CurrentQueue>> {
+    pub fn get_guild_queue(conn: &mut PgConnection, guild_id: &str) -> QueryResult<Vec<Self>> {
         current_queue::table
             .filter(current_queue::guild_id.eq(guild_id))
             .order(current_queue::position.asc())
-            .select(CurrentQueue::as_select())
-            .load::<CurrentQueue>(conn)
+            .select(Self::as_select())
+            .load::<Self>(conn)
     }
 
-    pub fn get_current_track(
-        conn: &mut PgConnection,
-        guild_id: &str,
-    ) -> QueryResult<Option<CurrentQueue>> {
+    pub fn get_current_track(conn: &mut PgConnection, guild_id: &str) -> QueryResult<Option<Self>> {
         current_queue::table
             .filter(current_queue::guild_id.eq(guild_id))
             .filter(current_queue::position.eq(0))
-            .select(CurrentQueue::as_select())
-            .first::<CurrentQueue>(conn)
+            .select(Self::as_select())
+            .first::<Self>(conn)
             .optional()
     }
 
@@ -60,7 +54,7 @@ impl CurrentQueue {
         title: Option<&str>,
         duration: Option<i32>,
         added_by: &str,
-    ) -> QueryResult<CurrentQueue> {
+    ) -> QueryResult<Self> {
         // Get the next position
         let next_position = current_queue::table
             .filter(current_queue::guild_id.eq(guild_id))
@@ -68,13 +62,12 @@ impl CurrentQueue {
             .order(current_queue::position.desc())
             .first::<i32>(conn)
             .optional()?
-            .map(|pos| pos + 1)
-            .unwrap_or(0);
+            .map_or(0, |pos| pos + 1);
 
         let new_queue_item = NewCurrentQueue {
             guild_id: guild_id.to_string(),
             url: url.to_string(),
-            title: title.map(|s| s.to_string()),
+            title: title.map(std::string::ToString::to_string),
             duration,
             position: next_position,
             added_by: added_by.to_string(),
@@ -88,8 +81,8 @@ impl CurrentQueue {
         current_queue::table
             .filter(current_queue::guild_id.eq(guild_id))
             .filter(current_queue::position.eq(next_position))
-            .select(CurrentQueue::as_select())
-            .first::<CurrentQueue>(conn)
+            .select(Self::as_select())
+            .first::<Self>(conn)
     }
 
     pub fn advance_queue(conn: &mut PgConnection, guild_id: &str) -> QueryResult<()> {

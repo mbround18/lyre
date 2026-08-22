@@ -1,3 +1,18 @@
+// Numeric casts throughout the codebase narrow domain-bounded values (song durations in
+// seconds, CPU counts, retry attempts, percentages 0-100) that never approach the source
+// type's range, so clippy's precision/truncation/sign-loss lints have no real bug to find
+// here — annotating each of the dozens of call sites individually would be pure noise.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_lossless
+)]
+// actix-web's App/HttpServer builder types are intentionally !Send (Rc-based) because each
+// worker runs its own single-threaded LocalSet; clippy's Send-future lint doesn't know that
+// and flags every handler and the server bootstrap, which is unfixable without dropping
+// actix-web's execution model.
+#![allow(clippy::future_not_send)]
 use anyhow::Result;
 use serenity::{
     all::{
@@ -61,7 +76,7 @@ impl serenity::prelude::EventHandler for Handler {
                 "Invite this bot: {} (app_id={}, user_id={})",
                 invite, app.id, ready.user.id
             );
-            println!("Invite this bot: {}", invite);
+            println!("Invite this bot: {invite}");
         }
 
         if let Ok(dir) = crate::audio::resolved_download_base_dir() {
@@ -160,7 +175,7 @@ async fn main() -> Result<()> {
             .use_softclip(false)
             .mix_mode(mix)
             // Increase gateway timeout to handle slow connections (60 seconds for very slow networks)
-            .gateway_timeout(Some(std::time::Duration::from_secs(60)))
+            .gateway_timeout(Some(std::time::Duration::from_mins(1)))
     };
 
     let mut client = serenity::Client::builder(token, intents)

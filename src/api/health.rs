@@ -44,7 +44,7 @@ pub async fn health_metrics() -> impl Responder {
             "lyre_downloads_files {}\n"
         ),
         m.uptime_secs,
-        if m.ready { 1 } else { 0 },
+        i32::from(m.ready),
         m.active_voice_calls,
         m.connected_guilds,
         m.total_queue_len,

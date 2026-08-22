@@ -4,11 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use once_cell::sync::Lazy;
-
 use crate::audio;
 
-pub static METRICS: Lazy<Arc<Metrics>> = Lazy::new(|| Arc::new(Metrics::new()));
+pub static METRICS: std::sync::LazyLock<Arc<Metrics>> =
+    std::sync::LazyLock::new(|| Arc::new(Metrics::new()));
 
 #[derive(Debug)]
 pub struct Metrics {

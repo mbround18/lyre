@@ -7,7 +7,6 @@ use serenity::async_trait;
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, Songbird};
 use std::sync::Arc;
 
-
 use crate::database::establish_connection;
 use crate::database::models::{CurrentQueue, QueueHistory, SongCache, VoiceConnection};
 use crate::metrics::METRICS;
@@ -33,10 +32,10 @@ impl VoiceEventHandler for TrackEndNotifier {
         // Check if queue is empty after this track ends
         let db_queue_empty = {
             let mut db_conn = establish_connection();
-            match CurrentQueue::get_current_track(&mut db_conn, &self.guild_id.to_string()) {
-                Ok(Some(_)) => false,
-                _ => true,
-            }
+            !matches!(
+                CurrentQueue::get_current_track(&mut db_conn, &self.guild_id.to_string()),
+                Ok(Some(_))
+            )
         };
 
         if db_queue_empty {
@@ -60,7 +59,7 @@ impl VoiceEventHandler for TrackEndNotifier {
             let embed = CreateEmbed::new()
                 .title("🎵 Queue Finished")
                 .description("All songs have finished playing. Disconnected from voice channel.")
-                .colour(0x808080); // Gray
+                .colour(0x0080_8080); // Gray
 
             let _ = self
                 .channel_id
@@ -79,6 +78,10 @@ pub fn definition() -> CreateCommand {
         .add_option(opt)
 }
 
+// Sequential Discord command flow (validate args, check perms, join voice, resolve/queue
+// the track); each step depends on state from the last, so splitting it up would mean
+// passing most of this function's locals through new signatures for no behavior change.
+#[allow(clippy::too_many_lines)]
 pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<()> {
     // Log some diagnostic information
     tracing::info!(
@@ -137,6 +140,7 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         if let Some(channel) = guild.channels.get(&channel_id) {
             if let Some(bot_member) = guild.members.get(&bot_id) {
                 let bot_permissions = guild.user_permissions_in(channel, bot_member);
+                drop(guild);
 
                 if !bot_permissions.connect() {
                     return Err(anyhow!(
@@ -179,7 +183,7 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         existing_call
     } else {
         // Retry voice channel joining with exponential backoff
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         let max_attempts = 5; // Increased from 3 to 5
 
         loop {
@@ -214,13 +218,11 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
                     attempts += 1;
                     if attempts >= max_attempts {
                         return Err(anyhow!(
-                            "failed to join voice channel after {} attempts: {}. This may be due to network issues, Discord API problems, or insufficient bot permissions.",
-                            max_attempts,
-                            e
+                            "failed to join voice channel after {max_attempts} attempts: {e}. This may be due to network issues, Discord API problems, or insufficient bot permissions."
                         ));
                     }
 
-                    let delay_ms = std::cmp::min(5000, 1000 * (2_u64.pow(attempts as u32 - 1))); // Exponential backoff with cap at 5s
+                    let delay_ms = std::cmp::min(5000, 1000 * (2_u64.pow(attempts - 1))); // Exponential backoff with cap at 5s
                     tracing::warn!(
                         "Voice channel join attempt {} failed: {}. Retrying in {}ms...",
                         attempts,
@@ -263,8 +265,7 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
     } else {
         crate::audio::get_or_fetch_metadata(url)
             .await
-            .map(|m| m.title)
-            .unwrap_or_else(|_| "Unknown".to_string())
+            .map_or_else(|_| "Unknown".to_string(), |m| m.title)
     };
 
     // Log to queue history
@@ -304,7 +305,7 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
         .title("🎵 Added to Queue")
         .description(&title)
         .url(url)
-        .colour(0x1db954); // Spotify green
+        .colour(0x001d_b954); // Spotify green
 
     cmd.edit_response(
         &ctx.http,
@@ -315,21 +316,4 @@ pub async fn handle(ctx: &SerenityContext, cmd: &CommandInteraction) -> Result<(
     .await?;
 
     Ok(())
-}
-
-fn text_bar(percent: u8) -> String {
-    // 20-wide bar
-    let total = 20u8;
-    let filled = ((percent as u16 * total as u16) / 100) as u8;
-    let mut s = String::with_capacity((total as usize) + 2);
-    s.push('[');
-    for i in 0..total {
-        if i < filled {
-            s.push('█');
-        } else {
-            s.push(' ');
-        }
-    }
-    s.push(']');
-    s
 }

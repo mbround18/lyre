@@ -131,7 +131,10 @@ pub async fn get_guild_settings(
     }
 }
 
+// Field names double as the JSON response's keys, so `total_*` stays for clarity to API
+// consumers even though clippy would rather the struct name carry that context instead.
 #[derive(Serialize)]
+#[allow(clippy::struct_field_names)]
 pub struct CacheStats {
     pub total_songs: i64,
     pub total_size_bytes: i64,

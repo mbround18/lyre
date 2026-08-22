@@ -6,6 +6,7 @@ use serenity::{
     },
     client::Context,
 };
+use std::fmt::Write as _;
 
 use crate::audio::{spawn_download_mp3, ytdlp_extract_playlist};
 
@@ -41,7 +42,7 @@ pub async fn run(ctx: &Context, interaction: &CommandInteraction) -> Result<()> 
                 .edit_response(
                     &ctx.http,
                     EditInteractionResponse::new()
-                        .content(format!("❌ Failed to load playlist: {}", err)),
+                        .content(format!("❌ Failed to load playlist: {err}")),
                 )
                 .await?;
             return Err(err);
@@ -57,8 +58,7 @@ pub async fn run(ctx: &Context, interaction: &CommandInteraction) -> Result<()> 
         .edit_response(
             &ctx.http,
             EditInteractionResponse::new().content(format!(
-                "📋 Found {} videos in playlist. Validating durations...",
-                total_count
+                "📋 Found {total_count} videos in playlist. Validating durations..."
             )),
         )
         .await?;
@@ -66,15 +66,14 @@ pub async fn run(ctx: &Context, interaction: &CommandInteraction) -> Result<()> 
     // Process each video
     for (video_url, title, duration_opt) in entries {
         // Check duration
-        if let Some(duration) = duration_opt {
-            if duration > MAX_DURATION_SECS {
-                let duration_mins = (duration / 60.0).round() as u32;
-                skipped_videos.push(format!(
-                    "⏭️ **{}** ({} minutes - too long)",
-                    title, duration_mins
-                ));
-                continue;
-            }
+        if let Some(duration) = duration_opt
+            && duration > MAX_DURATION_SECS
+        {
+            let duration_mins = (duration / 60.0).round() as u32;
+            skipped_videos.push(format!(
+                "⏭️ **{title}** ({duration_mins} minutes - too long)"
+            ));
+            continue;
         }
 
         // Queue this video - just spawn and forget for now
@@ -87,19 +86,16 @@ pub async fn run(ctx: &Context, interaction: &CommandInteraction) -> Result<()> 
     }
 
     // Final status message
-    let mut response = format!(
-        "✅ Queued **{}/{}** videos from playlist",
-        queued_count, total_count
-    );
+    let mut response = format!("✅ Queued **{queued_count}/{total_count}** videos from playlist");
 
     if !skipped_videos.is_empty() {
         response.push_str("\n\n**Skipped videos (over 70 minutes):**\n");
         for skipped in skipped_videos.iter().take(10) {
-            response.push_str(&format!("{}\n", skipped));
+            let _ = writeln!(response, "{skipped}");
         }
 
         if skipped_videos.len() > 10 {
-            response.push_str(&format!("... and {} more", skipped_videos.len() - 10));
+            let _ = write!(response, "... and {} more", skipped_videos.len() - 10);
         }
     }
 

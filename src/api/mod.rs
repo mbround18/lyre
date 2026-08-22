@@ -22,5 +22,5 @@ pub use guilds::get_guilds;
 pub use health::{health_metrics, livez, readyz};
 pub use info::{get_song_info, search_songs};
 pub use maintenance::{cleanup_old_data, get_maintenance_stats, get_user_history};
-pub use oauth::oauth_callback;
+pub use oauth::{get_oauth_config, oauth_callback};
 pub use queue::{add_to_queue, clear_queue, get_queue, skip_track};
