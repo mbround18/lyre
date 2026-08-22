@@ -5,6 +5,20 @@ use tracing::{error, info, warn};
 
 use crate::database::{establish_connection, models::VoiceConnection};
 
+// LYRE_PREROLL_MS masks the brief stutter/jitter some clients hear right as a track
+// starts, by playing muted for a short window before ramping to normal volume rather
+// than starting at full volume into whatever the first few frames sound like. Off
+// (0ms) by default so upgrading doesn't silently change existing playback behavior.
+const MAX_PREROLL_MS: u64 = 30_000;
+const PREROLL_VOLUME: f32 = 0.5;
+
+fn get_preroll_ms() -> u64 {
+    std::env::var("LYRE_PREROLL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(0, |v| v.min(MAX_PREROLL_MS))
+}
+
 /// Join a voice channel with retry logic
 pub async fn join_voice_channel(
     ctx: &SerenityContext,
@@ -242,6 +256,20 @@ pub async fn process_queue_update(ctx: &SerenityContext, guild_id_str: &str) {
         let mut call = call_lock.lock().await;
         let track_handle = call.enqueue_input(source.into()).await;
         drop(call);
+
+        let preroll_ms = get_preroll_ms();
+        if preroll_ms > 0 {
+            if let Err(e) = track_handle.set_volume(0.0) {
+                warn!("Failed to mute track for preroll: {}", e);
+            }
+            let ramp_handle = track_handle.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(preroll_ms)).await;
+                if let Err(e) = ramp_handle.set_volume(PREROLL_VOLUME) {
+                    warn!("Failed to raise volume after preroll: {}", e);
+                }
+            });
+        }
 
         // Try to get channel_id from voice connection DB to pass to TrackEndNotifier
         let channel_id = {

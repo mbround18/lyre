@@ -51,6 +51,13 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5433/lyre
 # Mixing mode: mono reduces bandwidth/CPU, can help with stutter. Default: stereo
 # LYRE_MIX_MODE=mono
 
+# Encoder bitrate in bits/sec (16000..192000), clamped if out of range. Defaults to 96000
+# LYRE_BITRATE=64000
+
+# Start tracks muted, then raise to 0.5 volume after N milliseconds (0..30000) to mask
+# initial jitter. Off (0) by default.
+# LYRE_PREROLL_MS=100
+
 # Optional: Path to cookies.txt for authenticated downloads (your own content, private videos)
 # COOKIES_FILE=/path/to/cookies.txt
 

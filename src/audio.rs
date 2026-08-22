@@ -173,6 +173,23 @@ pub async fn get_or_fetch_metadata(url: &str) -> Result<YtDlpMetadata> {
     Ok(metadata)
 }
 
+// LYRE_BITRATE is the mp3 encoder target in bits/sec; clamped to keep it inside a
+// range ffmpeg's libmp3lame will actually honor for speech/music without being
+// silently ignored (very low) or wasting bandwidth for no audible gain (very high).
+const MIN_BITRATE_BPS: u32 = 16_000;
+const MAX_BITRATE_BPS: u32 = 192_000;
+const DEFAULT_BITRATE_BPS: u32 = 96_000;
+
+fn get_bitrate() -> String {
+    let bitrate = std::env::var("LYRE_BITRATE")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .map_or(DEFAULT_BITRATE_BPS, |v| {
+            v.clamp(MIN_BITRATE_BPS, MAX_BITRATE_BPS)
+        });
+    bitrate.to_string()
+}
+
 fn get_ffmpeg_threads() -> String {
     // Check env var first
     if let Ok(threads) = std::env::var("FFMPEG_THREADS") {
@@ -338,7 +355,12 @@ pub fn spawn_download_mp3(
 
         // Start ffmpeg to read from stdin (pipe:0) and write mp3 to final cached path
         let ffmpeg_threads = get_ffmpeg_threads();
-        tracing::info!("Using {} ffmpeg threads", ffmpeg_threads);
+        let bitrate = get_bitrate();
+        tracing::info!(
+            "Using {} ffmpeg threads, {} bps bitrate",
+            ffmpeg_threads,
+            bitrate
+        );
 
         let mut ffmpeg_cmd = TokioCommand::new("ffmpeg");
         // -y overwrite, -hide_banner suppress, -loglevel info for progress on stderr
@@ -355,6 +377,8 @@ pub fn spawn_download_mp3(
             .arg("48000")
             .arg("-ac")
             .arg("2")
+            .arg("-b:a")
+            .arg(&bitrate)
             .arg("-f")
             .arg("mp3")
             .arg(cached.to_string_lossy().to_string())
